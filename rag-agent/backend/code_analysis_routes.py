@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import logging
 
-from models import get_db  # 假设你会创建一个数据库连接函数
+from models import get_db, KnowledgeBase, CodeRepository  # 添加CodeRepository导入
 from enhanced_code_analyzer import EnhancedCodeAnalyzer
 from analysis_service import CodeAnalysisService
 from config import get_autogen_config  # 使用现有配置管理
@@ -57,6 +57,7 @@ async def create_repository(
     background_tasks: BackgroundTasks,
     repo_path: str = Body(..., embed=True),
     repo_name: Optional[str] = Body(None, embed=True),
+    knowledge_base_id: Optional[int] = Body(None, embed=True),
     db: Session = Depends(get_db)
 ):
     """创建或更新代码仓库，并在后台分析代码"""
@@ -65,12 +66,18 @@ async def create_repository(
     if not os.path.exists(repo_path):
         raise HTTPException(status_code=404, detail=f"路径不存在: {repo_path}")
     
+    # 如果指定了知识库ID，检查知识库是否存在
+    if knowledge_base_id:
+        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+        if not kb:
+            raise HTTPException(status_code=404, detail=f"找不到ID为{knowledge_base_id}的知识库")
+    
     # 创建代码分析器
     analyzer = EnhancedCodeAnalyzer(db)
     
     try:
         # 立即开始分析
-        repo_id = await analyzer.analyze_repository(repo_path, repo_name)
+        repo_id = await analyzer.analyze_repository(repo_path, repo_name, knowledge_base_id)
         
         return {
             "status": "success",

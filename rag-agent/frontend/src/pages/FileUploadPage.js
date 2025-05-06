@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Upload, Button, message, Card, Typography, Space, List, Spin, Select, InputNumber, Row, Col, Input } from 'antd';
-import { InboxOutlined, FileOutlined, FileExcelOutlined, FilePdfOutlined } from '@ant-design/icons';
+import { InboxOutlined, FileOutlined, FileExcelOutlined, FilePdfOutlined, DatabaseOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
 const { Dragger } = Upload;
@@ -10,65 +10,81 @@ const { Option } = Select;
 const FileUploadPage = () => {
     const [uploading, setUploading] = useState(false);
     const [uploadedFiles, setUploadedFiles] = useState([]);
-    const [repositories, setRepositories] = useState([]);
-    const [selectedRepository, setSelectedRepository] = useState(null);
-    const [repoLoading, setRepoLoading] = useState(false);
+    const [knowledgeBases, setKnowledgeBases] = useState([]);
+    const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
+    const [kbLoading, setKbLoading] = useState(false);
     const [chunkSize, setChunkSize] = useState(1000);
     const [localFilePath, setLocalFilePath] = useState('');
 
-    // 获取代码库列表
-    const fetchRepositories = async () => {
-        setRepoLoading(true);
+    // 获取知识库列表
+    const fetchKnowledgeBases = async () => {
+        setKbLoading(true);
         try {
-            const response = await axios.get('/code/repositories');
-            setRepositories(response.data || []);
+            const response = await axios.get('/knowledge-bases');
+            setKnowledgeBases(response.data || []);
             if (response.data && response.data.length > 0) {
-                setSelectedRepository(response.data[0].id);
+                setSelectedKnowledgeBase(response.data[0].id);
             }
         } catch (error) {
-            console.error('获取代码库列表失败:', error);
-            message.error('获取代码库列表失败');
+            console.error('获取知识库列表失败:', error);
+            message.error('获取知识库列表失败');
         } finally {
-            setRepoLoading(false);
+            setKbLoading(false);
         }
     };
 
     // 加载已上传的文件
     const loadUploadedFiles = async () => {
         try {
-            // 获取指定代码库的文档
-            const params = selectedRepository ? { repository_id: selectedRepository } : {};
-            const response = await axios.get('/documents', { params });
+            if (selectedKnowledgeBase) {
+                // 获取知识库中的文档
+                const response = await axios.get(`/knowledge-bases/${selectedKnowledgeBase}/documents`);
+                const docs = response.data || [];
 
-            const docs = response.data.documents || [];
+                // 转换格式
+                const files = docs.map(doc => ({
+                    uid: doc.id,
+                    name: doc.name,
+                    status: 'done',
+                    url: doc.path,
+                    knowledge_base_id: selectedKnowledgeBase,
+                    chunks_count: doc.chunks_count,
+                    added_at: doc.added_at
+                }));
 
-            // 转换格式
-            const files = docs.map(doc => ({
-                uid: doc.id,
-                name: doc.id,
-                status: 'done',
-                url: doc.path,
-                repository_id: doc.repository_id,
-                chunks_count: doc.chunks_count,
-                added_at: doc.added_at
-            }));
+                setUploadedFiles(files);
+            } else {
+                // 获取所有文档
+                const response = await axios.get('/documents');
+                const docs = response.data.documents || [];
 
-            setUploadedFiles(files);
+                // 转换格式
+                const files = docs.map(doc => ({
+                    uid: doc.id,
+                    name: doc.id,
+                    status: 'done',
+                    url: doc.path,
+                    chunks_count: doc.chunks_count,
+                    added_at: doc.added_at
+                }));
+
+                setUploadedFiles(files);
+            }
         } catch (error) {
             console.error('Error loading documents:', error);
             message.error('加载文档列表失败');
         }
     };
 
-    // 组件加载时获取代码库列表
+    // 组件加载时获取知识库列表
     useEffect(() => {
-        fetchRepositories();
+        fetchKnowledgeBases();
         loadUploadedFiles();
     }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
-    // 当选择的代码库变化时，重新加载文档列表
+    // 当选择的知识库变化时，重新加载文档列表
     useEffect(() => {
-        if (selectedRepository) {
+        if (selectedKnowledgeBase) {
             // 添加少量延迟，避免频繁重复请求
             const timer = setTimeout(() => {
                 loadUploadedFiles();
@@ -76,7 +92,7 @@ const FileUploadPage = () => {
 
             return () => clearTimeout(timer);
         }
-    }, [selectedRepository]);
+    }, [selectedKnowledgeBase]);
 
     // 自定义文件图标
     const getFileIcon = (fileName) => {
@@ -93,9 +109,9 @@ const FileUploadPage = () => {
 
     // 处理上传前的逻辑
     const beforeUpload = (file) => {
-        // 检查是否选择了代码库
-        if (!selectedRepository) {
-            message.error('请先选择代码库！');
+        // 检查是否选择了知识库
+        if (!selectedKnowledgeBase) {
+            message.error('请先选择知识库！');
             return false;
         }
 
@@ -105,12 +121,13 @@ const FileUploadPage = () => {
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'application/vnd.ms-excel',
             'application/pdf',
-            'text/csv'
+            'text/csv',
+            'text/markdown'
         ];
 
         const isAllowedType = allowedTypes.includes(file.type);
         if (!isAllowedType) {
-            message.error('仅支持上传 TXT, Excel, PDF 和 CSV 文件！');
+            message.error('仅支持上传 TXT, Markdown, Excel, PDF 和 CSV 文件！');
         }
 
         // 检查文件大小
@@ -124,8 +141,8 @@ const FileUploadPage = () => {
 
     // 处理自定义上传
     const customUpload = async ({ file, onSuccess, onError }) => {
-        if (!selectedRepository) {
-            message.error('请先选择代码库！');
+        if (!selectedKnowledgeBase) {
+            message.error('请先选择知识库！');
             return;
         }
 
@@ -133,7 +150,7 @@ const FileUploadPage = () => {
 
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('repository_id', selectedRepository);
+        formData.append('knowledge_base_id', selectedKnowledgeBase);
         formData.append('chunk_size', chunkSize);
 
         try {
@@ -151,7 +168,7 @@ const FileUploadPage = () => {
                 name: file.name,
                 status: 'done',
                 url: response.data.file_path,
-                repository_id: selectedRepository
+                knowledge_base_id: selectedKnowledgeBase
             }]);
 
             if (onSuccess) {
@@ -172,8 +189,8 @@ const FileUploadPage = () => {
 
     // 处理本地文件路径上传
     const handleLocalFileUpload = async () => {
-        if (!selectedRepository) {
-            message.error('请先选择代码库！');
+        if (!selectedKnowledgeBase) {
+            message.error('请先选择知识库！');
             return;
         }
 
@@ -187,7 +204,7 @@ const FileUploadPage = () => {
         try {
             const response = await axios.post('/upload-document', {
                 file_path: localFilePath,
-                repository_id: selectedRepository,
+                knowledge_base_id: selectedKnowledgeBase,
                 chunk_size: chunkSize
             });
 
@@ -207,23 +224,23 @@ const FileUploadPage = () => {
         <div>
             <Title level={4}>上传文档</Title>
             <Text type="secondary">
-                支持上传 TXT, Excel, PDF 和 CSV 文件，上传后系统会自动处理并添加到知识库
+                支持上传 TXT, Markdown, Excel, PDF 和 CSV 文件，上传后系统会自动处理并添加到知识库
             </Text>
 
             <Card style={{ marginTop: 16 }}>
                 <Row gutter={16} style={{ marginBottom: 16 }}>
                     <Col span={12}>
                         <Space>
-                            <Text strong>选择代码库:</Text>
+                            <Text strong>选择知识库:</Text>
                             <Select
                                 style={{ width: 200 }}
-                                loading={repoLoading}
-                                value={selectedRepository}
-                                onChange={setSelectedRepository}
-                                placeholder="选择代码库"
+                                loading={kbLoading}
+                                value={selectedKnowledgeBase}
+                                onChange={setSelectedKnowledgeBase}
+                                placeholder="选择知识库"
                             >
-                                {repositories.map(repo => (
-                                    <Option key={repo.id} value={repo.id}>{repo.name}</Option>
+                                {knowledgeBases.map(kb => (
+                                    <Option key={kb.id} value={kb.id}>{kb.name}</Option>
                                 ))}
                             </Select>
                         </Space>
@@ -247,7 +264,7 @@ const FileUploadPage = () => {
                     beforeUpload={beforeUpload}
                     customRequest={customUpload}
                     showUploadList={false}
-                    disabled={uploading || !selectedRepository}
+                    disabled={uploading || !selectedKnowledgeBase}
                 >
                     <p className="ant-upload-drag-icon">
                         <InboxOutlined />
@@ -278,7 +295,7 @@ const FileUploadPage = () => {
                                 type="primary"
                                 onClick={handleLocalFileUpload}
                                 loading={uploading}
-                                disabled={!selectedRepository}
+                                disabled={!selectedKnowledgeBase}
                                 block
                             >
                                 上传本地文件

@@ -27,21 +27,45 @@ def get_db():
 
 Base = declarative_base()
 
+# 知识库模型
+class KnowledgeBase(Base):
+    """知识库模型，用于组织管理多个代码库和文档"""
+    __tablename__ = "knowledge_bases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.now)
+    updated_at = Column(DateTime, default=datetime.datetime.now, onupdate=datetime.datetime.now)
+
+    # 关联关系
+    repositories = relationship("CodeRepository", back_populates="knowledge_base", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
+
 # 代码仓库模型
 class CodeRepository(Base):
-    """代码仓库信息"""
-    __tablename__ = 'repositories'
+    """代码仓库模型，表示一个需要被分析的代码库"""
+    __tablename__ = "code_repositories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    path = Column(String, nullable=False)
+    url = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    last_analyzed = Column(DateTime, nullable=True)
+    added_at = Column(DateTime, default=datetime.datetime.now)
     
-    id = Column(Integer, primary_key=True)
-    name = Column(String(100), nullable=False)
-    path = Column(String(255), nullable=False)
-    last_analyzed = Column(DateTime, default=datetime.datetime.utcnow)
-    is_active = Column(Boolean, default=True)
+    # 分析状态: pending, in_progress, completed, failed
+    status = Column(String, default="pending")
     
-    # 关系
+    # 添加知识库外键
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True)
+    knowledge_base = relationship("KnowledgeBase", back_populates="repositories")
+    
+    # 关联关系
     files = relationship("CodeFile", back_populates="repository", cascade="all, delete-orphan")
     components = relationship("CodeComponent", back_populates="repository", cascade="all, delete-orphan")
-    documents = relationship("Document", back_populates="repository", cascade="all, delete-orphan")  # 添加文档关联
+    queries = relationship("UserQuery", back_populates="repository")
 
 # 代码文件模型
 class CodeFile(Base):
@@ -49,7 +73,7 @@ class CodeFile(Base):
     __tablename__ = 'files'
     
     id = Column(Integer, primary_key=True)
-    repository_id = Column(Integer, ForeignKey('repositories.id'))
+    repository_id = Column(Integer, ForeignKey('code_repositories.id'))
     file_path = Column(String(255), nullable=False)
     language = Column(String(50))
     last_modified = Column(DateTime)
@@ -65,7 +89,7 @@ class CodeComponent(Base):
     __tablename__ = 'components'
     
     id = Column(Integer, primary_key=True)
-    repository_id = Column(Integer, ForeignKey('repositories.id'))
+    repository_id = Column(Integer, ForeignKey('code_repositories.id'))
     file_id = Column(Integer, ForeignKey('files.id'))
     name = Column(String(100), nullable=False)
     type = Column(String(20))  # function, class, method
@@ -116,9 +140,12 @@ class UserQuery(Base):
     id = Column(Integer, primary_key=True)
     query_text = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-    repository_id = Column(Integer, ForeignKey('repositories.id'))
+    repository_id = Column(Integer, ForeignKey('code_repositories.id'))
     result_summary = Column(Text)
     used_llm = Column(Boolean, default=False)
+    
+    # 关系
+    repository = relationship("CodeRepository", back_populates="queries")
 
 # 组件查询关联表
 component_queries = Table(
@@ -129,19 +156,21 @@ component_queries = Table(
 
 # 文档模型
 class Document(Base):
-    """文档信息，与代码库关联"""
-    __tablename__ = 'documents'
+    """文档模型，表示一个上传的文档"""
+    __tablename__ = "documents"
     
-    id = Column(Integer, primary_key=True)
-    repository_id = Column(Integer, ForeignKey('repositories.id'))
-    title = Column(String(255), nullable=False)
-    file_path = Column(String(500), nullable=False)
-    file_type = Column(String(50))
+    id = Column(Integer, primary_key=True, index=True)
+    path = Column(String, nullable=False, index=True)
+    source = Column(String, nullable=True)
+    document_type = Column(String, nullable=True)
     chunks_count = Column(Integer, default=0)
-    added_at = Column(DateTime, default=datetime.datetime.utcnow)
+    added_at = Column(DateTime, default=datetime.datetime.now)
     
-    # 关系
-    repository = relationship("CodeRepository", back_populates="documents")
+    # 添加知识库外键
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True)
+    knowledge_base = relationship("KnowledgeBase", back_populates="documents")
+    
+    # 关联关系
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
 # 文档块模型

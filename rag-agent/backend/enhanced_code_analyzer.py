@@ -38,12 +38,13 @@ class EnhancedCodeAnalyzer:
         self.db_session = db_session
         self.current_repo = None
     
-    async def analyze_repository(self, repo_path: str, repo_name: Optional[str] = None) -> int:
+    async def analyze_repository(self, repo_path: str, repo_name: Optional[str] = None, knowledge_base_id: Optional[int] = None) -> int:
         """分析整个代码仓库
         
         Args:
             repo_path: 代码仓库路径
             repo_name: 仓库名称，默认使用目录名
+            knowledge_base_id: 关联的知识库ID
             
         Returns:
             int: 仓库ID
@@ -66,13 +67,17 @@ class EnhancedCodeAnalyzer:
             repo = CodeRepository(
                 name=repo_name, 
                 path=repo_path,
+                knowledge_base_id=knowledge_base_id,
                 last_analyzed=datetime.utcnow()
             )
             self.db_session.add(repo)
             self.db_session.commit()
         else:
-            # 更新分析时间
+            # 更新分析时间和知识库ID
             repo.last_analyzed = datetime.utcnow()
+            if knowledge_base_id is not None:
+                repo.knowledge_base_id = knowledge_base_id
+                self.db_session.commit()
         
         self.current_repo = repo
         

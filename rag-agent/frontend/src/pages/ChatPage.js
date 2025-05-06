@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Input, Button, Spin, Switch, Typography, Space, Divider, message, Collapse, Tag, Select } from 'antd';
-import { SendOutlined, CodeOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { Input, Button, Spin, Switch, Typography, Space, Divider, message, Collapse, Tag, Select, Tooltip } from 'antd';
+import { SendOutlined, CodeOutlined, InfoCircleOutlined, DatabaseOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
 
@@ -15,31 +15,31 @@ const ChatPage = () => {
     const [loading, setLoading] = useState(false);
     const [useCodeAnalysis, setUseCodeAnalysis] = useState(false);
     const [thinkingProcess, setThinkingProcess] = useState([]);
-    const [repositories, setRepositories] = useState([]);
-    const [selectedRepository, setSelectedRepository] = useState(null);
-    const [repoLoading, setRepoLoading] = useState(false);
+    const [knowledgeBases, setKnowledgeBases] = useState([]);
+    const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
+    const [kbLoading, setKbLoading] = useState(false);
     const messagesEndRef = useRef(null);
 
-    // 获取代码库列表
-    const fetchRepositories = async () => {
-        setRepoLoading(true);
+    // 获取知识库列表
+    const fetchKnowledgeBases = async () => {
+        setKbLoading(true);
         try {
-            const response = await axios.get('/code/repositories');
-            setRepositories(response.data || []);
+            const response = await axios.get('/knowledge-bases');
+            setKnowledgeBases(response.data || []);
             if (response.data && response.data.length > 0) {
-                setSelectedRepository(response.data[0].id);
+                setSelectedKnowledgeBase(response.data[0].id);
             }
         } catch (error) {
-            console.error('获取代码库列表失败:', error);
-            message.error('获取代码库列表失败');
+            console.error('获取知识库列表失败:', error);
+            message.error('获取知识库列表失败');
         } finally {
-            setRepoLoading(false);
+            setKbLoading(false);
         }
     };
 
-    // 组件加载时获取代码库列表
+    // 组件加载时获取知识库列表
     useEffect(() => {
-        fetchRepositories();
+        fetchKnowledgeBases();
     }, []);
 
     // 滚动到底部
@@ -71,7 +71,7 @@ const ChatPage = () => {
             // 发送请求到后端
             const response = await axios.post('/ask', {
                 query: input,
-                repository_id: selectedRepository,
+                knowledge_base_id: selectedKnowledgeBase,
                 use_code_analysis: useCodeAnalysis
             });
 
@@ -164,16 +164,16 @@ const ChatPage = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <Title level={4}>智能助手</Title>
                 <Space>
-                    <Text>选择代码库:</Text>
+                    <Text>选择知识库:</Text>
                     <Select
                         style={{ width: 200 }}
-                        loading={repoLoading}
-                        value={selectedRepository}
-                        onChange={setSelectedRepository}
-                        placeholder="选择代码库"
+                        loading={kbLoading}
+                        value={selectedKnowledgeBase}
+                        onChange={setSelectedKnowledgeBase}
+                        placeholder="选择知识库"
                     >
-                        {repositories.map(repo => (
-                            <Option key={repo.id} value={repo.id}>{repo.name}</Option>
+                        {knowledgeBases.map(kb => (
+                            <Option key={kb.id} value={kb.id}>{kb.name}</Option>
                         ))}
                     </Select>
                     <Text>启用代码分析</Text>
@@ -182,6 +182,9 @@ const ChatPage = () => {
                         onChange={setUseCodeAnalysis}
                         checkedChildren={<CodeOutlined />}
                     />
+                    <Tooltip title="启用后，系统将分析知识库中的代码，您可以直接询问代码结构和功能">
+                        <InfoCircleOutlined style={{ color: '#1890ff' }} />
+                    </Tooltip>
                 </Space>
             </div>
 

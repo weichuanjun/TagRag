@@ -8,6 +8,7 @@ import warnings
 import logging
 from sqlalchemy.orm import Session
 from models import Document as DBDocument
+import datetime
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class DocumentProcessor:
         )
         self.vector_store = vector_store
     
-    async def process_document(self, file_path: str, repository_id: int, db: Session, chunk_size: int = 1000):
+    async def process_document(self, file_path: str, repository_id: int, db: Session, chunk_size: int = 1000, knowledge_base_id: Optional[int] = None):
         """处理文档并添加到向量存储和数据库
         
         Args:
@@ -32,6 +33,7 @@ class DocumentProcessor:
             repository_id: 代码库ID
             db: 数据库会话
             chunk_size: 块大小
+            knowledge_base_id: 知识库ID
             
         Returns:
             处理结果
@@ -42,10 +44,11 @@ class DocumentProcessor:
         
         # 创建数据库文档记录
         db_document = DBDocument(
-            repository_id=repository_id,
-            title=os.path.basename(file_path),
-            file_path=file_path,
-            file_type=os.path.splitext(file_path)[1].lower()
+            path=file_path,
+            source=os.path.basename(file_path),
+            document_type=os.path.splitext(file_path)[1].lower(),
+            knowledge_base_id=knowledge_base_id,
+            added_at=datetime.datetime.now()
         )
         db.add(db_document)
         db.commit()

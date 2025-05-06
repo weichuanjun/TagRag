@@ -7,7 +7,7 @@ import {
 import {
     SearchOutlined, CodeOutlined, BranchesOutlined,
     RocketOutlined, FileOutlined, RobotOutlined, FolderOutlined,
-    ArrowRightOutlined, UploadOutlined, LoadingOutlined
+    ArrowRightOutlined, UploadOutlined, LoadingOutlined, DatabaseOutlined
 } from '@ant-design/icons';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -42,9 +42,12 @@ const typeIcons = {
 const CodeAnalysisPage = () => {
     // 状态管理
     const [repositories, setRepositories] = useState([]);
+    const [knowledgeBases, setKnowledgeBases] = useState([]);
+    const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
     const [currentRepo, setCurrentRepo] = useState(null);
     const [repoSummary, setRepoSummary] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [kbLoading, setKbLoading] = useState(false);
     const [searchResults, setSearchResults] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedComponent, setSelectedComponent] = useState(null);
@@ -58,6 +61,46 @@ const CodeAnalysisPage = () => {
     const [uploadModalVisible, setUploadModalVisible] = useState(false);
     const [localRepoPath, setLocalRepoPath] = useState('');
     const [componentType, setComponentType] = useState(null);
+
+    // 加载知识库列表
+    const fetchKnowledgeBases = useCallback(async () => {
+        try {
+            setKbLoading(true);
+            const response = await axios.get('/knowledge-bases');
+            setKnowledgeBases(response.data);
+            if (response.data.length > 0 && !selectedKnowledgeBase) {
+                setSelectedKnowledgeBase(response.data[0].id);
+            }
+        } catch (error) {
+            message.error('加载知识库失败');
+            console.error(error);
+        } finally {
+            setKbLoading(false);
+        }
+    }, [selectedKnowledgeBase]);
+
+    // 加载特定知识库中的代码库
+    const fetchRepositoriesByKnowledgeBase = useCallback(async (kbId) => {
+        if (!kbId) return;
+
+        try {
+            setLoading(true);
+            const response = await axios.get(`/knowledge-bases/${kbId}/repositories`);
+            setRepositories(response.data);
+            if (response.data.length > 0) {
+                setCurrentRepo(response.data[0]);
+            } else {
+                setCurrentRepo(null);
+                setRepoSummary(null);
+                setDirectoryTree(null);
+            }
+        } catch (error) {
+            message.error('加载知识库代码库失败');
+            console.error(error);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
 
     // 加载仓库列表
     const fetchRepositories = useCallback(async () => {
@@ -96,11 +139,21 @@ const CodeAnalysisPage = () => {
         }
     }, []);
 
-    // 首次加载和仓库切换时
+    // 首次加载
     useEffect(() => {
-        fetchRepositories();
-    }, [fetchRepositories]);
+        fetchKnowledgeBases();
+    }, [fetchKnowledgeBases]);
 
+    // 当选择的知识库变化时
+    useEffect(() => {
+        if (selectedKnowledgeBase) {
+            fetchRepositoriesByKnowledgeBase(selectedKnowledgeBase);
+        } else {
+            fetchRepositories();
+        }
+    }, [selectedKnowledgeBase, fetchRepositoriesByKnowledgeBase, fetchRepositories]);
+
+    // 当代码库变化时
     useEffect(() => {
         if (currentRepo) {
             fetchRepoSummary(currentRepo.id);
@@ -286,7 +339,7 @@ const CodeAnalysisPage = () => {
         }
     };
 
-    // 添加本地代码仓库
+    // 添加本地代码库
     const addLocalRepo = async () => {
         if (!localRepoPath.trim()) {
             message.error('请输入有效的代码库路径');
@@ -296,18 +349,21 @@ const CodeAnalysisPage = () => {
         setLoading(true);
         try {
             const response = await axios.post('/code/repositories', {
-                repo_path: localRepoPath
+                repo_path: localRepoPath,
+                knowledge_base_id: selectedKnowledgeBase
             });
 
-            message.success('代码库添加成功');
+            message.success('代码库添加成功，正在分析中...');
             setUploadModalVisible(false);
-            setLocalRepoPath('');
 
-            // 刷新仓库列表
-            fetchRepositories();
+            // 刷新代码库列表
+            if (selectedKnowledgeBase) {
+                fetchRepositoriesByKnowledgeBase(selectedKnowledgeBase);
+            } else {
+                fetchRepositories();
+            }
         } catch (error) {
-            message.error('添加代码库失败');
-            console.error(error);
+            message.error(`添加代码库失败: ${error.response?.data?.detail || error.message}`);
         } finally {
             setLoading(false);
         }
@@ -589,40 +645,53 @@ const CodeAnalysisPage = () => {
         );
     };
 
+    const repoSelector = (
+        <Space style={{ marginBottom: 16 }}>
+            <span style={{ fontWeight: 'bold' }}>知识库:</span>
+            <Select
+                style={{ width: 200 }}
+                loading={kbLoading}
+                placeholder="选择知识库"
+                value={selectedKnowledgeBase}
+                onChange={setSelectedKnowledgeBase}
+            >
+                <Option value={null}>所有代码库</Option>
+                {knowledgeBases.map(kb => (
+                    <Option key={kb.id} value={kb.id}>{kb.name}</Option>
+                ))}
+            </Select>
+
+            <span style={{ fontWeight: 'bold', marginLeft: 16 }}>代码库:</span>
+            <Select
+                style={{ width: 220 }}
+                loading={loading}
+                placeholder="选择代码库"
+                value={currentRepo?.id}
+                onChange={(value) => {
+                    const selected = repositories.find(r => r.id === value);
+                    setCurrentRepo(selected);
+                }}
+                disabled={!repositories || repositories.length === 0}
+            >
+                {repositories.map(repo => (
+                    <Option key={repo.id} value={repo.id}>{repo.name}</Option>
+                ))}
+            </Select>
+
+            <Button
+                type="primary"
+                icon={<UploadOutlined />}
+                onClick={() => setUploadModalVisible(true)}
+            >
+                添加代码库
+            </Button>
+        </Space>
+    );
+
     return (
         <div className="code-analysis-container">
             <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Space>
-                    <Select
-                        style={{ width: 240 }}
-                        placeholder="选择代码库"
-                        loading={loading}
-                        value={currentRepo ? currentRepo.id : undefined}
-                        onChange={value => {
-                            const repo = repositories.find(r => r.id === value);
-                            setCurrentRepo(repo);
-                        }}
-                    >
-                        {repositories.map(repo => (
-                            <Option key={repo.id} value={repo.id}>{repo.name}</Option>
-                        ))}
-                    </Select>
-
-                    <Button
-                        type="primary"
-                        icon={<UploadOutlined />}
-                        onClick={() => setUploadModalVisible(true)}
-                    >
-                        添加代码库
-                    </Button>
-
-                    <Button
-                        icon={<CodeOutlined />}
-                        onClick={createExampleRepo}
-                    >
-                        创建示例库
-                    </Button>
-                </Space>
+                {repoSelector}
 
                 <Space>
                     <Select

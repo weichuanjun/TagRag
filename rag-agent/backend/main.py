@@ -12,10 +12,12 @@ import shutil
 from vector_store import VectorStore
 from document_processor import DocumentProcessor
 from agent_manager import AgentManager
-from models import create_tables, get_db, CodeRepository
+from models import create_tables, get_db, CodeRepository, KnowledgeBase
 
 # 导入新增的代码分析模块
 from code_analysis_routes import router as code_analysis_router
+# 导入知识库管理模块
+from knowledge_base_routes import router as knowledge_base_router
 
 # 配置日志
 logging.basicConfig(
@@ -52,6 +54,8 @@ vector_store_cache = {}
 
 # 添加代码分析路由
 app.include_router(code_analysis_router)
+# 添加知识库管理路由
+app.include_router(knowledge_base_router)
 
 # 确保数据库和表已创建
 create_tables()
@@ -59,13 +63,14 @@ create_tables()
 # 问答请求模型
 class QuestionRequest(BaseModel):
     query: str
-    repository_id: Optional[int] = None
+    knowledge_base_id: Optional[int] = None
     use_code_analysis: bool = False
 
 # 文档上传请求模型
 class DocumentUploadRequest(BaseModel):
     file_path: str
-    repository_id: int
+    repository_id: Optional[int] = None
+    knowledge_base_id: Optional[int] = None
     chunk_size: int = 1000
 
 # 用于清理缓存的工具函数
@@ -90,12 +95,19 @@ async def read_root():
 
 @app.post("/upload-document")
 async def upload_document(request: DocumentUploadRequest, db = Depends(get_db)):
-    """上传文档并处理，关联到特定代码库"""
+    """上传文档并处理，关联到特定代码库或知识库"""
     try:
-        # 检查代码库是否存在
-        repository = db.query(CodeRepository).filter(CodeRepository.id == request.repository_id).first()
-        if not repository:
-            raise HTTPException(status_code=404, detail=f"找不到ID为{request.repository_id}的代码库")
+        # 检查代码库是否存在（如果指定了）
+        if request.repository_id:
+            repository = db.query(CodeRepository).filter(CodeRepository.id == request.repository_id).first()
+            if not repository:
+                raise HTTPException(status_code=404, detail=f"找不到ID为{request.repository_id}的代码库")
+        
+        # 检查知识库是否存在（如果指定了）
+        if request.knowledge_base_id:
+            knowledge_base = db.query(KnowledgeBase).filter(KnowledgeBase.id == request.knowledge_base_id).first()
+            if not knowledge_base:
+                raise HTTPException(status_code=404, detail=f"找不到ID为{request.knowledge_base_id}的知识库")
         
         # 获取向量存储实例
         repo_vector_store = get_vector_store(request.repository_id)
@@ -106,7 +118,8 @@ async def upload_document(request: DocumentUploadRequest, db = Depends(get_db)):
             request.file_path, 
             request.repository_id,
             db,
-            request.chunk_size
+            request.chunk_size,
+            request.knowledge_base_id
         )
         return result
     except Exception as e:
@@ -131,26 +144,50 @@ async def get_documents(repository_id: Optional[int] = None, db = Depends(get_db
 
 @app.post("/ask")
 async def ask_question(request: QuestionRequest):
-    """处理用户问题，支持基于特定代码库的问答"""
+    """处理用户问题，支持基于特定知识库的问答"""
     try:
+        # 获取知识库ID
+        knowledge_base_id = request.knowledge_base_id
+        
+        # 查询知识库中的代码库
+        repository_id = None
+        if knowledge_base_id:
+            db = next(get_db())
+            try:
+                # 查找知识库中的第一个代码库
+                repo = db.query(CodeRepository).filter(
+                    CodeRepository.knowledge_base_id == knowledge_base_id
+                ).first()
+                if repo:
+                    repository_id = repo.id
+                    logger.info(f"找到知识库 {knowledge_base_id} 中的代码库 {repository_id}")
+            except Exception as e:
+                logger.error(f"查询知识库代码库时出错: {str(e)}")
+        
         # 使用指定代码库的向量存储或默认存储
-        vector_store = get_vector_store(request.repository_id)
-        if request.repository_id:
-            logger.info(f"使用代码库 {request.repository_id} 的向量存储回答问题")
+        vector_store = get_vector_store(repository_id)
+        if repository_id:
+            logger.info(f"使用代码库 {repository_id} 的向量存储回答问题")
         
         # 初始化代码分析器（如果开启了代码分析）
         code_analyzer = None
-        if request.use_code_analysis and request.repository_id:
+        if request.use_code_analysis and repository_id:
             from analysis_service import CodeAnalysisService
             from sqlalchemy.orm import Session
-            from models import get_db
             
             # 创建数据库会话
-            db = next(get_db())
+            db_session = next(get_db())
             try:
                 # 创建代码分析服务
-                code_analyzer = CodeAnalysisService(db)
-                logger.info(f"已创建代码分析服务，用于分析代码库 {request.repository_id}")
+                code_analyzer = CodeAnalysisService(db_session)
+                logger.info(f"已创建代码分析服务，用于分析代码库")
+                
+                # 预先检查字段列表，确保服务正常工作
+                try:
+                    all_fields = await code_analyzer.get_all_fields(repository_id)
+                    logger.info(f"代码分析服务正常工作，找到 {len(all_fields)} 个字段")
+                except Exception as e:
+                    logger.error(f"检查代码分析服务时出错: {str(e)}")
             except Exception as e:
                 logger.error(f"创建代码分析服务失败: {str(e)}")
                 # 即使创建失败也继续（不使用代码分析）
@@ -160,7 +197,9 @@ async def ask_question(request: QuestionRequest):
             request.query, 
             request.use_code_analysis,
             code_analyzer,
-            vector_store
+            vector_store,
+            repository_id,
+            knowledge_base_id
         )
         
         # 获取思考过程
@@ -175,20 +214,32 @@ async def ask_question(request: QuestionRequest):
         raise HTTPException(status_code=500, detail=f"生成回答失败: {str(e)}")
 
 @app.get("/code-fields")
-async def get_code_fields():
+async def get_code_fields(repository_id: Optional[int] = None):
     """获取代码字段列表"""
     try:
-        fields = await code_analyzer.get_all_fields()
+        from analysis_service import CodeAnalysisService
+        
+        # 创建数据库会话
+        db_session = next(get_db())
+        code_analyzer = CodeAnalysisService(db_session)
+        
+        fields = await code_analyzer.get_all_fields(repository_id)
         return {"fields": fields}
     except Exception as e:
         logger.error(f"获取代码字段时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取代码字段失败: {str(e)}")
 
 @app.get("/field-impact")
-async def get_field_impact(field_name: str):
+async def get_field_impact(field_name: str, repository_id: Optional[int] = None):
     """获取字段影响"""
     try:
-        impact = await code_analyzer.get_field_impact(field_name)
+        from analysis_service import CodeAnalysisService
+        
+        # 创建数据库会话
+        db_session = next(get_db())
+        code_analyzer = CodeAnalysisService(db_session)
+        
+        impact = await code_analyzer.get_field_impact(field_name, repository_id)
         return {"impact": impact}
     except Exception as e:
         logger.error(f"获取字段影响时出错: {str(e)}")
@@ -197,16 +248,24 @@ async def get_field_impact(field_name: str):
 @app.post("/upload/file")
 async def upload_file(
     file: UploadFile = File(...),
-    repository_id: int = Form(...),
+    repository_id: Optional[int] = Form(None),
+    knowledge_base_id: Optional[int] = Form(None),
     chunk_size: int = Form(1000),
     db = Depends(get_db)
 ):
-    """上传文件并处理，关联到特定代码库"""
+    """上传文件并处理，关联到特定代码库或知识库"""
     try:
-        # 检查代码库是否存在
-        repository = db.query(CodeRepository).filter(CodeRepository.id == repository_id).first()
-        if not repository:
-            raise HTTPException(status_code=404, detail=f"找不到ID为{repository_id}的代码库")
+        # 检查代码库是否存在（如果指定了）
+        if repository_id:
+            repository = db.query(CodeRepository).filter(CodeRepository.id == repository_id).first()
+            if not repository:
+                raise HTTPException(status_code=404, detail=f"找不到ID为{repository_id}的代码库")
+        
+        # 检查知识库是否存在（如果指定了）
+        if knowledge_base_id:
+            knowledge_base = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+            if not knowledge_base:
+                raise HTTPException(status_code=404, detail=f"找不到ID为{knowledge_base_id}的知识库")
         
         # 创建临时文件保存上传的内容
         import tempfile
@@ -229,7 +288,8 @@ async def upload_file(
             temp_file_path, 
             repository_id,
             db,
-            chunk_size
+            chunk_size,
+            knowledge_base_id
         )
         
         # 返回结果，添加文件保存路径
