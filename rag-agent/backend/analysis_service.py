@@ -587,4 +587,147 @@ class CodeAnalysisService:
                         current["children"].append(new_dir)
                         current = new_dir
         
-        return dir_tree 
+        return dir_tree
+    
+    async def get_all_fields(self, repo_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """获取代码库中的所有字段
+        
+        Args:
+            repo_id: 可选的仓库ID，如果不提供则返回所有仓库的字段
+            
+        Returns:
+            List[Dict]: 字段列表，包含字段名称、类型、所属组件等信息
+        """
+        logger.info(f"获取{'仓库 ' + str(repo_id) if repo_id else '所有'}代码字段")
+        
+        try:
+            # 构建查询条件
+            query = self.db_session.query(CodeComponent).filter(
+                CodeComponent.type.in_(["field", "property", "variable", "attribute"])
+            )
+            
+            # 如果指定了仓库ID，添加过滤条件
+            if repo_id:
+                query = query.filter(CodeComponent.repository_id == repo_id)
+            
+            # 执行查询
+            components = query.all()
+            
+            # 格式化结果
+            fields = []
+            for component in components:
+                field_info = {
+                    "id": component.id,
+                    "name": component.name,
+                    "type": component.type,
+                    "data_type": None,  # 数据类型，默认为None
+                    "belongs_to": None,  # 所属类/组件
+                    "file_path": None,  # 文件路径
+                    "is_public": True,  # 默认为公开
+                    "is_static": False,  # 默认为非静态
+                    "description": None  # 描述
+                }
+                
+                # 从元数据中提取更多信息
+                if component.component_metadata:
+                    try:
+                        metadata = component.component_metadata
+                        if isinstance(metadata, dict):
+                            # 提取数据类型
+                            field_info["data_type"] = metadata.get("data_type") or metadata.get("type")
+                            
+                            # 提取可见性信息
+                            visibility = metadata.get("visibility", "").lower()
+                            field_info["is_public"] = visibility != "private" and visibility != "protected"
+                            
+                            # 提取静态标志
+                            field_info["is_static"] = metadata.get("is_static", False) or metadata.get("static", False)
+                            
+                            # 提取描述
+                            field_info["description"] = metadata.get("description", "")
+                    except Exception as e:
+                        logger.warning(f"处理字段元数据时出错: {str(e)}")
+                
+                # 获取所属组件信息
+                if component.parent_id:
+                    parent = self.db_session.query(CodeComponent).get(component.parent_id)
+                    if parent:
+                        field_info["belongs_to"] = parent.name
+                
+                # 获取文件路径
+                if component.file:
+                    field_info["file_path"] = component.file.file_path
+                
+                fields.append(field_info)
+            
+            logger.info(f"找到 {len(fields)} 个字段")
+            return fields
+            
+        except Exception as e:
+            logger.error(f"获取字段列表时出错: {str(e)}")
+            raise e
+    
+    async def get_field_impact(self, field_name: str, repo_id: Optional[int] = None) -> Dict[str, Any]:
+        """获取字段影响分析
+        
+        Args:
+            field_name: 字段名称
+            repo_id: 可选的仓库ID
+            
+        Returns:
+            Dict: 字段影响信息，包括使用该字段的组件列表
+        """
+        logger.info(f"分析字段 {field_name} 的影响")
+        
+        try:
+            # 查找匹配的字段
+            query = self.db_session.query(CodeComponent).filter(
+                CodeComponent.name == field_name,
+                CodeComponent.type.in_(["field", "property", "variable", "attribute"])
+            )
+            
+            # 如果指定了仓库ID，添加过滤条件
+            if repo_id:
+                query = query.filter(CodeComponent.repository_id == repo_id)
+            
+            # 获取匹配的字段
+            field = query.first()
+            if not field:
+                return {"error": f"未找到字段: {field_name}"}
+            
+            # 获取依赖关系
+            dependent_components = self.db_session.query(
+                CodeComponent
+            ).join(
+                ComponentDependency,
+                CodeComponent.id == ComponentDependency.source_id
+            ).filter(
+                ComponentDependency.target_id == field.id
+            ).all()
+            
+            # 格式化结果
+            impact_info = {
+                "field": {
+                    "id": field.id,
+                    "name": field.name,
+                    "type": field.type,
+                    "file_path": field.file.file_path if field.file else None
+                },
+                "used_by": [
+                    {
+                        "id": comp.id,
+                        "name": comp.name,
+                        "type": comp.type,
+                        "file_path": comp.file.file_path if comp.file else None
+                    }
+                    for comp in dependent_components
+                ],
+                "usage_count": len(dependent_components)
+            }
+            
+            logger.info(f"字段 {field_name} 被 {len(dependent_components)} 个组件使用")
+            return impact_info
+            
+        except Exception as e:
+            logger.error(f"分析字段影响时出错: {str(e)}")
+            raise e 

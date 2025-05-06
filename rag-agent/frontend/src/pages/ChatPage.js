@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Input, Button, Spin, Switch, Typography, Space, Divider, message, Collapse, Tag } from 'antd';
+import { Input, Button, Spin, Switch, Typography, Space, Divider, message, Collapse, Tag, Select } from 'antd';
 import { SendOutlined, CodeOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
@@ -7,6 +7,7 @@ import axios from 'axios';
 const { TextArea } = Input;
 const { Title, Text } = Typography;
 const { Panel } = Collapse;
+const { Option } = Select;
 
 const ChatPage = () => {
     const [messages, setMessages] = useState([]);
@@ -14,7 +15,32 @@ const ChatPage = () => {
     const [loading, setLoading] = useState(false);
     const [useCodeAnalysis, setUseCodeAnalysis] = useState(false);
     const [thinkingProcess, setThinkingProcess] = useState([]);
+    const [repositories, setRepositories] = useState([]);
+    const [selectedRepository, setSelectedRepository] = useState(null);
+    const [repoLoading, setRepoLoading] = useState(false);
     const messagesEndRef = useRef(null);
+
+    // 获取代码库列表
+    const fetchRepositories = async () => {
+        setRepoLoading(true);
+        try {
+            const response = await axios.get('/code/repositories');
+            setRepositories(response.data || []);
+            if (response.data && response.data.length > 0) {
+                setSelectedRepository(response.data[0].id);
+            }
+        } catch (error) {
+            console.error('获取代码库列表失败:', error);
+            message.error('获取代码库列表失败');
+        } finally {
+            setRepoLoading(false);
+        }
+    };
+
+    // 组件加载时获取代码库列表
+    useEffect(() => {
+        fetchRepositories();
+    }, []);
 
     // 滚动到底部
     const scrollToBottom = () => {
@@ -45,6 +71,7 @@ const ChatPage = () => {
             // 发送请求到后端
             const response = await axios.post('/ask', {
                 query: input,
+                repository_id: selectedRepository,
                 use_code_analysis: useCodeAnalysis
             });
 
@@ -137,6 +164,18 @@ const ChatPage = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <Title level={4}>智能助手</Title>
                 <Space>
+                    <Text>选择代码库:</Text>
+                    <Select
+                        style={{ width: 200 }}
+                        loading={repoLoading}
+                        value={selectedRepository}
+                        onChange={setSelectedRepository}
+                        placeholder="选择代码库"
+                    >
+                        {repositories.map(repo => (
+                            <Option key={repo.id} value={repo.id}>{repo.name}</Option>
+                        ))}
+                    </Select>
                     <Text>启用代码分析</Text>
                     <Switch
                         checked={useCodeAnalysis}

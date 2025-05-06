@@ -139,14 +139,15 @@ class AgentManager:
     async def generate_answer(self, 
                        query: str, 
                        use_code_analysis: bool = False, 
-                       code_analyzer = None) -> str:
+                       code_analyzer = None,
+                       vector_store = None) -> str:
         """生成对用户问题的回答"""
         try:
             # 清空之前的思考过程
             self.clear_thinking_process()
             
             # 1. 从向量存储中检索相关文档
-            retrieval_results = await self.vector_store.search(query, k=5)
+            retrieval_results = await (vector_store or self.vector_store).search(query, k=5)
             
             # 2. 准备检索结果
             retrieval_context = ""

@@ -4,103 +4,191 @@ import json
 import time
 import chromadb
 from chromadb.config import Settings
-from langchain.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.schema import Document
+import logging
 
 # 导入配置
 from config import EMBEDDING_MODEL, VECTOR_DB_DIR
 
+logger = logging.getLogger(__name__)
+
 class VectorStore:
     """向量存储管理类，处理文档的存储和检索"""
     
-    def __init__(self, persist_directory: str = None):
-        self.persist_directory = persist_directory or VECTOR_DB_DIR
+    def __init__(self, repository_id: Optional[int] = None):
+        """
+        初始化向量存储
+        
+        Args:
+            repository_id: 代码库ID，如果指定则创建特定代码库的向量存储
+        """
+        # 为每个代码库创建独立的向量存储目录
+        if repository_id:
+            self.repository_id = repository_id
+            self.persist_directory = os.path.join(VECTOR_DB_DIR, f"repo_{repository_id}")
+        else:
+            self.repository_id = None
+            self.persist_directory = os.path.join(VECTOR_DB_DIR, "default")
+            
         os.makedirs(self.persist_directory, exist_ok=True)
+        logger.info(f"向量存储目录: {self.persist_directory}")
         
         # 使用配置文件中的多语言嵌入模型
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL
-        )
+        try:
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name=EMBEDDING_MODEL
+            )
+            logger.info(f"加载嵌入模型: {EMBEDDING_MODEL}")
+        except Exception as e:
+            logger.error(f"加载嵌入模型失败: {str(e)}")
+            # 尝试使用备选模型
+            try:
+                self.embeddings = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                )
+                logger.info("使用备选嵌入模型")
+            except Exception as e2:
+                logger.error(f"加载备选模型也失败: {str(e2)}")
+                raise RuntimeError("无法加载任何嵌入模型")
         
         # 初始化文档索引元数据存储
         self.metadata_path = os.path.join(self.persist_directory, "document_metadata.json")
         self.document_metadata = self._load_metadata()
         
-        # 初始化ChromaDB客户端
-        self.client = chromadb.Client(Settings(
-            persist_directory=self.persist_directory,
-            anonymized_telemetry=False
-        ))
+        # 初始化ChromaDB客户端 - 更新为新的API
+        try:
+            # 使用新的API方式创建客户端
+            self.client = chromadb.PersistentClient(
+                path=self.persist_directory
+            )
+            logger.info("使用新版ChromaDB API创建客户端")
+        except Exception as e:
+            logger.warning(f"使用新版API创建ChromaDB客户端失败: {str(e)}，尝试使用旧版API")
+            try:
+                # 兼容旧版本
+                self.client = chromadb.Client(Settings(
+                    persist_directory=self.persist_directory,
+                    anonymized_telemetry=False
+                ))
+                logger.info("使用旧版ChromaDB API创建客户端")
+            except Exception as e2:
+                logger.error(f"创建ChromaDB客户端失败: {str(e2)}")
+                raise RuntimeError(f"无法创建ChromaDB客户端: {str(e2)}")
+        
+        # 创建LangChain的Chroma实例
+        self._init_langchain_chroma()
         
         # 确保集合存在
         self._ensure_collection()
     
+    def _init_langchain_chroma(self):
+        """初始化LangChain的Chroma实例"""
+        try:
+            collection_name = f"repo_{self.repository_id}" if self.repository_id else "default"
+            
+            # 新版API
+            self.langchain_chroma = Chroma(
+                client=self.client,
+                collection_name=collection_name,
+                embedding_function=self.embeddings
+            )
+            logger.info(f"已初始化LangChain Chroma: {collection_name}")
+        except Exception as e:
+            logger.error(f"初始化LangChain Chroma失败: {str(e)}")
+            raise e
+    
     def _load_metadata(self) -> Dict[str, Any]:
         """加载文档元数据"""
         if os.path.exists(self.metadata_path):
-            with open(self.metadata_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            try:
+                with open(self.metadata_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"加载元数据文件失败: {str(e)}")
+                return {"documents": {}}
         return {"documents": {}}
     
     def _save_metadata(self):
         """保存文档元数据"""
-        with open(self.metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(self.document_metadata, f, ensure_ascii=False, indent=2)
+        try:
+            with open(self.metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(self.document_metadata, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存元数据文件失败: {str(e)}")
     
     def _ensure_collection(self):
         """确保集合存在"""
         try:
-            self.collection = self.client.get_or_create_collection(
-                name="document_collection",
-                embedding_function=None  # 我们使用LangChain的embeddings
-            )
+            collection_name = f"repo_{self.repository_id}" if self.repository_id else "default"
+            # 检查集合是否存在
+            try:
+                self.collection = self.client.get_collection(name=collection_name)
+                logger.info(f"获取到已存在的集合: {collection_name}")
+            except Exception:
+                # 集合不存在，创建新集合
+                self.collection = self.client.create_collection(name=collection_name)
+                logger.info(f"创建新集合: {collection_name}")
         except Exception as e:
-            print(f"创建集合时出错: {str(e)}")
+            logger.error(f"创建集合时出错: {str(e)}")
             raise e
     
-    async def add_documents(self, documents: List[Document], source_file: str):
-        """添加文档到向量存储"""
+    async def add_documents(self, documents: List[Document], source_file: str, document_id: Optional[int] = None):
+        """添加文档到向量存储
+        
+        Args:
+            documents: 文档列表
+            source_file: 源文件路径
+            document_id: 数据库中的文档ID，用于关联
+        """
         try:
-            # 创建向量存储
-            vectorstore = Chroma.from_documents(
-                documents=documents,
-                embedding=self.embeddings,
-                persist_directory=self.persist_directory,
-                collection_name="document_collection"
-            )
+            # 创建集合名称
+            collection_name = f"repo_{self.repository_id}" if self.repository_id else "default"
+            logger.info(f"添加文档到集合: {collection_name}，文档数: {len(documents)}")
+            
+            # 修改文档的元数据，添加仓库和文档ID信息
+            for doc in documents:
+                if not doc.metadata:
+                    doc.metadata = {}
+                doc.metadata["repository_id"] = self.repository_id
+                if document_id:
+                    doc.metadata["document_id"] = document_id
+            
+            # 使用已创建的langchain_chroma实例添加文档
+            self.langchain_chroma.add_documents(documents)
+            logger.info(f"已添加 {len(documents)} 个文档到 {collection_name}")
             
             # 更新元数据
             file_name = os.path.basename(source_file)
             self.document_metadata["documents"][file_name] = {
                 "path": source_file,
                 "chunks_count": len(documents),
-                "added_at": time.strftime("%Y-%m-%d %H:%M:%S")
+                "added_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "repository_id": self.repository_id,
+                "document_id": document_id
             }
             self._save_metadata()
             
             return {
                 "status": "success",
-                "document_id": file_name,
+                "document_id": document_id or file_name,
                 "chunks_count": len(documents)
             }
             
         except Exception as e:
-            print(f"添加文档时出错: {str(e)}")
+            logger.error(f"添加文档时出错: {str(e)}")
             raise e
     
     async def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
         """搜索相关文档"""
         try:
-            # 创建向量存储实例用于检索
-            vectorstore = Chroma(
-                persist_directory=self.persist_directory,
-                embedding_function=self.embeddings,
-                collection_name="document_collection"
-            )
+            # 确定集合名称
+            collection_name = f"repo_{self.repository_id}" if self.repository_id else "default"
+            logger.info(f"在集合 {collection_name} 中搜索: {query}")
             
-            # 执行相似度搜索
-            documents = vectorstore.similarity_search_with_score(query, k=k)
+            # 使用已创建的langchain_chroma实例进行搜索
+            documents = self.langchain_chroma.similarity_search_with_score(query, k=k)
             
             # 格式化结果
             results = []
@@ -111,24 +199,35 @@ class VectorStore:
                     "score": float(score)
                 })
             
+            logger.info(f"找到 {len(results)} 个结果")
             return results
             
         except Exception as e:
-            print(f"搜索文档时出错: {str(e)}")
+            logger.error(f"搜索文档时出错: {str(e)}")
             raise e
     
-    async def get_document_list(self) -> List[Dict[str, Any]]:
-        """获取已处理的文档列表"""
+    async def get_document_list(self, repository_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """获取已处理的文档列表
+        
+        Args:
+            repository_id: 可选的仓库ID过滤
+        """
         try:
             documents = []
             for doc_id, metadata in self.document_metadata["documents"].items():
+                # 如果指定了仓库ID，只返回对应仓库的文档
+                if repository_id is not None and metadata.get("repository_id") != repository_id:
+                    continue
+                    
                 documents.append({
                     "id": doc_id,
                     "path": metadata["path"],
                     "chunks_count": metadata["chunks_count"],
-                    "added_at": metadata.get("added_at", "未知")
+                    "added_at": metadata.get("added_at", "未知"),
+                    "repository_id": metadata.get("repository_id"),
+                    "document_id": metadata.get("document_id")
                 })
             return documents
         except Exception as e:
-            print(f"获取文档列表时出错: {str(e)}")
+            logger.error(f"获取文档列表时出错: {str(e)}")
             raise e 

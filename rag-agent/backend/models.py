@@ -41,6 +41,7 @@ class CodeRepository(Base):
     # 关系
     files = relationship("CodeFile", back_populates="repository", cascade="all, delete-orphan")
     components = relationship("CodeComponent", back_populates="repository", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="repository", cascade="all, delete-orphan")  # 添加文档关联
 
 # 代码文件模型
 class CodeFile(Base):
@@ -125,6 +126,37 @@ component_queries = Table(
     Column('component_id', Integer, ForeignKey('components.id')),
     Column('query_id', Integer, ForeignKey('user_queries.id'))
 )
+
+# 文档模型
+class Document(Base):
+    """文档信息，与代码库关联"""
+    __tablename__ = 'documents'
+    
+    id = Column(Integer, primary_key=True)
+    repository_id = Column(Integer, ForeignKey('repositories.id'))
+    title = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    file_type = Column(String(50))
+    chunks_count = Column(Integer, default=0)
+    added_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # 关系
+    repository = relationship("CodeRepository", back_populates="documents")
+    chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+
+# 文档块模型
+class DocumentChunk(Base):
+    """文档分块，用于向量检索"""
+    __tablename__ = 'document_chunks'
+    
+    id = Column(Integer, primary_key=True)
+    document_id = Column(Integer, ForeignKey('documents.id'))
+    chunk_index = Column(Integer)
+    content = Column(Text)
+    chunk_metadata = Column(JSON)
+    
+    # 关系
+    document = relationship("Document", back_populates="chunks")
 
 # 创建数据库表
 def create_tables():

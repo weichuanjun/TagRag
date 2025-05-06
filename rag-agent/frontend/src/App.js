@@ -1,14 +1,12 @@
 import React from 'react';
 import { Routes, Route, Link, Navigate } from 'react-router-dom';
 import { Layout, Menu } from 'antd';
-import { MessageOutlined, FileOutlined, CodeOutlined, BookOutlined } from '@ant-design/icons';
+import { MessageOutlined, CodeOutlined, FileOutlined } from '@ant-design/icons';
 
 // 导入页面组件
 import ChatPage from './pages/ChatPage';
 import FileUploadPage from './pages/FileUploadPage';
-import DocumentsPage from './pages/DocumentsPage';
-import CodeUploadPage from './pages/CodeUploadPage';
-import CodeAnalysisPage from './pages/CodeAnalysisPage';  // 新增代码分析页面
+import CodeAnalysisPage from './pages/CodeAnalysisPage';  // 保留代码分析页面
 
 const { Header, Content, Footer, Sider } = Layout;
 
@@ -27,13 +25,7 @@ function App() {
                     <Menu.Item key="2" icon={<FileOutlined />}>
                         <Link to="/upload">文档上传</Link>
                     </Menu.Item>
-                    <Menu.Item key="3" icon={<BookOutlined />}>
-                        <Link to="/documents">文档管理</Link>
-                    </Menu.Item>
-                    <Menu.Item key="4" icon={<CodeOutlined />}>
-                        <Link to="/code-upload">代码上传</Link>
-                    </Menu.Item>
-                    <Menu.Item key="5" icon={<CodeOutlined />}>
+                    <Menu.Item key="3" icon={<CodeOutlined />}>
                         <Link to="/code-analysis">代码分析</Link>
                     </Menu.Item>
                 </Menu>
@@ -45,8 +37,6 @@ function App() {
                         <Routes>
                             <Route path="/chat" element={<ChatPage />} />
                             <Route path="/upload" element={<FileUploadPage />} />
-                            <Route path="/documents" element={<DocumentsPage />} />
-                            <Route path="/code-upload" element={<CodeUploadPage />} />
                             <Route path="/code-analysis" element={<CodeAnalysisPage />} />
                             <Route path="/" element={<Navigate to="/chat" replace />} />
                         </Routes>
