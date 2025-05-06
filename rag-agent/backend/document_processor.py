@@ -40,7 +40,7 @@ class DocumentProcessor:
         """
         # 更新文本分割器的块大小
         self.text_splitter.chunk_size = chunk_size
-        logger.info(f"处理文档: {file_path}, 仓库ID: {repository_id}, 块大小: {chunk_size}")
+        logger.info(f"处理文档: {file_path}, 仓库ID: {repository_id}, 知识库ID: {knowledge_base_id}, 块大小: {chunk_size}")
         
         # 创建数据库文档记录
         db_document = DBDocument(
@@ -54,10 +54,10 @@ class DocumentProcessor:
         db.commit()
         logger.info(f"已创建文档记录, ID: {db_document.id}")
         
-        # 调用处理文件的方法
-        return await self.process_file(file_path, self.vector_store, db_document.id)
+        # 调用处理文件的方法，传递知识库ID
+        return await self.process_file(file_path, self.vector_store, db_document.id, knowledge_base_id)
     
-    async def process_file(self, file_path: str, vector_store, document_id: Optional[int] = None):
+    async def process_file(self, file_path: str, vector_store, document_id: Optional[int] = None, knowledge_base_id: Optional[int] = None):
         """处理文件并添加到向量存储"""
         try:
             # 根据文件扩展名决定使用哪个加载器
@@ -75,6 +75,13 @@ class DocumentProcessor:
                 documents = self._process_markdown_file(file_path)
             else:
                 raise ValueError(f"不支持的文件格式: {file_extension}")
+            
+            # 为每个文档添加知识库ID
+            if knowledge_base_id is not None:
+                for doc in documents:
+                    if not doc.metadata:
+                        doc.metadata = {}
+                    doc.metadata["knowledge_base_id"] = knowledge_base_id
             
             # 分块处理
             chunks = self.text_splitter.split_documents(documents)

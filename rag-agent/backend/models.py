@@ -187,6 +187,24 @@ class DocumentChunk(Base):
     # 关系
     document = relationship("Document", back_populates="chunks")
 
+# Agent Prompt模型
+class AgentPrompt(Base):
+    """Agent提示词模型，用于不同知识库的不同Agent定制"""
+    __tablename__ = 'agent_prompts'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    description = Column(String, nullable=True)
+    agent_type = Column(String, nullable=False, index=True)  # chat, code_analysis, document_qa 等
+    prompt_template = Column(Text, nullable=False)
+    is_default = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.now)
+    updated_at = Column(DateTime, default=datetime.datetime.now, onupdate=datetime.datetime.now)
+    
+    # 添加知识库外键 (可为空表示通用模板)
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True)
+    knowledge_base = relationship("KnowledgeBase")
+
 # 创建数据库表
 def create_tables():
     Base.metadata.create_all(bind=engine)

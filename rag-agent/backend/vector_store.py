@@ -147,13 +147,14 @@ class VectorStore:
             collection_name = f"repo_{self.repository_id}" if self.repository_id else "default"
             logger.info(f"添加文档到集合: {collection_name}，文档数: {len(documents)}")
             
-            # 修改文档的元数据，添加仓库和文档ID信息
+            # 确保元数据中保留知识库ID
             for doc in documents:
                 if not doc.metadata:
                     doc.metadata = {}
                 doc.metadata["repository_id"] = self.repository_id
                 if document_id:
                     doc.metadata["document_id"] = document_id
+                # 知识库ID已经在document_processor中添加，这里不需要重复添加
             
             # 使用已创建的langchain_chroma实例添加文档
             self.langchain_chroma.add_documents(documents)
@@ -161,12 +162,18 @@ class VectorStore:
             
             # 更新元数据
             file_name = os.path.basename(source_file)
+            kb_id = None
+            # 从第一个文档中获取知识库ID（如果有）
+            if documents and documents[0].metadata and "knowledge_base_id" in documents[0].metadata:
+                kb_id = documents[0].metadata["knowledge_base_id"]
+                
             self.document_metadata["documents"][file_name] = {
                 "path": source_file,
                 "chunks_count": len(documents),
                 "added_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "repository_id": self.repository_id,
-                "document_id": document_id
+                "document_id": document_id,
+                "knowledge_base_id": kb_id
             }
             self._save_metadata()
             
@@ -180,24 +187,45 @@ class VectorStore:
             logger.error(f"添加文档时出错: {str(e)}")
             raise e
     
-    async def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
-        """搜索相关文档"""
+    async def search(self, query: str, k: int = 5, knowledge_base_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """搜索相关文档
+        
+        Args:
+            query: 搜索查询
+            k: 返回结果数量
+            knowledge_base_id: 知识库ID，用于过滤文档
+            
+        Returns:
+            相关文档列表
+        """
         try:
             # 确定集合名称
             collection_name = f"repo_{self.repository_id}" if self.repository_id else "default"
             logger.info(f"在集合 {collection_name} 中搜索: {query}")
             
             # 使用已创建的langchain_chroma实例进行搜索
-            documents = self.langchain_chroma.similarity_search_with_score(query, k=k)
+            documents = self.langchain_chroma.similarity_search_with_score(query, k=k*2)  # 查询更多结果，以便过滤后仍有足够的结果
             
             # 格式化结果
             results = []
             for doc, score in documents:
+                # 如果指定了知识库ID，过滤不属于该知识库的文档
+                if knowledge_base_id is not None:
+                    doc_kb_id = doc.metadata.get("knowledge_base_id")
+                    # 如果文档没有知识库ID或知识库ID不匹配，则跳过
+                    if doc_kb_id is None or int(doc_kb_id) != int(knowledge_base_id):
+                        logger.info(f"过滤掉不属于知识库 {knowledge_base_id} 的文档，该文档知识库ID: {doc_kb_id}")
+                        continue
+                
                 results.append({
                     "content": doc.page_content,
                     "metadata": doc.metadata,
                     "score": float(score)
                 })
+                
+                # 如果已经有足够的结果，则停止
+                if len(results) >= k:
+                    break
             
             logger.info(f"找到 {len(results)} 个结果")
             return results

@@ -18,6 +18,7 @@ const ChatPage = () => {
     const [knowledgeBases, setKnowledgeBases] = useState([]);
     const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
     const [kbLoading, setKbLoading] = useState(false);
+    const [agentPrompts, setAgentPrompts] = useState([]);
     const messagesEndRef = useRef(null);
 
     // 获取知识库列表
@@ -41,6 +42,24 @@ const ChatPage = () => {
     useEffect(() => {
         fetchKnowledgeBases();
     }, []);
+
+    // 当知识库变化时，加载对应的提示词
+    useEffect(() => {
+        if (selectedKnowledgeBase) {
+            fetchAgentPromptsForKnowledgeBase(selectedKnowledgeBase);
+        }
+    }, [selectedKnowledgeBase]);
+
+    // 获取知识库的关联提示词
+    const fetchAgentPromptsForKnowledgeBase = async (knowledgeBaseId) => {
+        try {
+            const response = await axios.get(`/agent-prompts/for-kb/${knowledgeBaseId}`);
+            console.log('已加载知识库关联的提示词:', response.data);
+            setAgentPrompts(response.data);
+        } catch (error) {
+            console.error('获取知识库提示词失败:', error);
+        }
+    };
 
     // 滚动到底部
     const scrollToBottom = () => {
@@ -68,11 +87,26 @@ const ChatPage = () => {
         setThinkingProcess([]); // 清空上次的思考过程
 
         try {
+            // 获取当前知识库相关的提示词
+            const promptConfigs = {};
+            if (agentPrompts.length > 0) {
+                // 为每种Agent类型找到默认的提示词
+                agentPrompts.forEach(prompt => {
+                    if (prompt.is_default) {
+                        promptConfigs[prompt.agent_type] = prompt.prompt_template;
+                    }
+                });
+            }
+
+            // 添加调试日志
+            console.log('使用的提示词配置:', promptConfigs);
+
             // 发送请求到后端
             const response = await axios.post('/ask', {
                 query: input,
                 knowledge_base_id: selectedKnowledgeBase,
-                use_code_analysis: useCodeAnalysis
+                use_code_analysis: useCodeAnalysis,
+                prompt_configs: promptConfigs // 发送提示词配置
             });
 
             // 获取思考过程

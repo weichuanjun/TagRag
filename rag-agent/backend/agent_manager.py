@@ -5,6 +5,9 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import asyncio
 
+# 导入VectorStore
+from vector_store import VectorStore
+
 # 导入配置文件
 from config import get_autogen_config, AGENT_PROMPTS
 
@@ -29,7 +32,7 @@ class AgentManager:
         # 存储思考过程
         self.thinking_process = []
     
-    def _init_agents(self):
+    def _init_agents(self, use_code_analysis=False, prompt_configs=None):
         """初始化智能体"""
         # 用户代理（代表用户发起请求）
         self.user_proxy = autogen.UserProxyAgent(
@@ -40,36 +43,50 @@ class AgentManager:
             max_consecutive_auto_reply=self.max_consecutive_auto_reply,
         )
         
-        # 检索代理（负责检索文档）
+        # 智能体配置
+        def get_agent_config(name, system_message, config=None, llm_config=None):
+            """获取智能体配置"""
+            return {
+                "name": name,
+                "system_message": system_message,
+                "human_input_mode": "NEVER",
+                "max_consecutive_auto_reply": 3,
+                "llm_config": llm_config or self.llm_config,
+                **(config or {})
+            }
+
+        # 创建智能体
+        retrieval_system = AGENT_PROMPTS.get("retrieval_agent", "你是一个专门负责文档检索的智能体")
+        if prompt_configs and "retrieval_agent" in prompt_configs:
+            retrieval_system = prompt_configs["retrieval_agent"]
+            print(f"使用自定义retrieval_agent提示词: {retrieval_system[:50]}...")
         self.retrieval_agent = autogen.AssistantAgent(
-            name="检索代理",
-            llm_config=self.llm_config,
-            system_message=AGENT_PROMPTS["retrieval_agent"],
-            max_consecutive_auto_reply=self.max_consecutive_auto_reply,
+            **get_agent_config("retrieval_agent", retrieval_system)
         )
         
-        # 分析代理（分析检索到的信息）
+        analyst_system = AGENT_PROMPTS.get("analyst_agent", "你是一个专门负责分析和综合信息的智能体")
+        if prompt_configs and "analyst_agent" in prompt_configs:
+            analyst_system = prompt_configs["analyst_agent"]
+            print(f"使用自定义analyst_agent提示词: {analyst_system[:50]}...")
         self.analyst_agent = autogen.AssistantAgent(
-            name="分析代理",
-            llm_config=self.llm_config,
-            system_message=AGENT_PROMPTS["analyst_agent"],
-            max_consecutive_auto_reply=self.max_consecutive_auto_reply,
+            **get_agent_config("analyst_agent", analyst_system)
         )
         
-        # 代码分析代理（分析代码）
+        # 如果开启了代码分析
+        code_analyst_system = AGENT_PROMPTS.get("code_analyst_agent", "你是一个专门负责代码分析的智能体")
+        if prompt_configs and "code_analyst_agent" in prompt_configs:
+            code_analyst_system = prompt_configs["code_analyst_agent"]
+            print(f"使用自定义code_analyst_agent提示词: {code_analyst_system[:50]}...")
         self.code_analyst_agent = autogen.AssistantAgent(
-            name="代码分析代理",
-            llm_config=self.llm_config,
-            system_message=AGENT_PROMPTS["code_analyst_agent"],
-            max_consecutive_auto_reply=self.max_consecutive_auto_reply,
+            **get_agent_config("code_analyst_agent", code_analyst_system)
         )
         
-        # 回复生成代理（综合所有信息生成最终回复）
+        response_system = AGENT_PROMPTS.get("response_agent", "你是一个专门负责生成最终回复的智能体")
+        if prompt_configs and "response_agent" in prompt_configs:
+            response_system = prompt_configs["response_agent"]
+            print(f"使用自定义response_agent提示词: {response_system[:50]}...")
         self.response_agent = autogen.AssistantAgent(
-            name="回复生成代理",
-            llm_config=self.llm_config,
-            system_message=AGENT_PROMPTS["response_agent"],
-            max_consecutive_auto_reply=self.max_consecutive_auto_reply,
+            **get_agent_config("response_agent", response_system)
         )
     
     def _extract_chat_history(self):
@@ -136,22 +153,26 @@ class AgentManager:
         """清空思考过程"""
         self.thinking_process = []
     
-    async def generate_answer(self, 
-                       query: str, 
-                       use_code_analysis: bool = False, 
-                       code_analyzer = None,
-                       vector_store = None,
-                       repository_id: Optional[int] = None,
-                       knowledge_base_id: Optional[int] = None) -> str:
+    async def generate_answer(
+        self, 
+        user_query: str,
+        use_code_analysis: bool = False,
+        code_analyzer: Any = None,
+        vector_store: Optional[VectorStore] = None,
+        repository_id: Optional[int] = None,
+        knowledge_base_id: Optional[int] = None,
+        prompt_configs: Optional[Dict[str, str]] = None
+    ) -> str:
         """生成对用户问题的回答
         
         Args:
-            query: 用户查询
+            user_query: 用户查询
             use_code_analysis: 是否使用代码分析
             code_analyzer: 代码分析器实例
             vector_store: 向量存储实例
             repository_id: 代码库ID
             knowledge_base_id: 知识库ID
+            prompt_configs: 自定义prompt配置
             
         Returns:
             str: 生成的回答
@@ -160,10 +181,14 @@ class AgentManager:
             # 清空之前的思考过程
             self.clear_thinking_process()
             
+            # 如果有自定义提示词，重新初始化智能体
+            if prompt_configs:
+                self._init_agents(use_code_analysis, prompt_configs)
+            
             # 1. 从向量存储中检索相关文档
             # 使用正确的 vector_store 实例（它内部已经绑定了 repo_id，如果适用）
             current_vector_store = vector_store or self.vector_store
-            retrieval_results = await current_vector_store.search(query, k=5)
+            retrieval_results = await current_vector_store.search(user_query, k=5, knowledge_base_id=knowledge_base_id)
             
             # 2. 准备检索结果
             retrieval_context = ""
@@ -173,7 +198,11 @@ class AgentManager:
                 retrieval_context += f"来源: {result['metadata'].get('source', '未知')}\n"
                 if 'sheet_name' in result['metadata']:
                     retrieval_context += f"工作表: {result['metadata']['sheet_name']}\n"
-                retrieval_context += f"相关度得分: {result['score']}\n\n"
+                retrieval_context += f"相关度得分: {result['score']}\n"
+                # 添加知识库ID信息，帮助追踪
+                if 'knowledge_base_id' in result['metadata']:
+                    retrieval_context += f"知识库ID: {result['metadata']['knowledge_base_id']}\n"
+                retrieval_context += "\n"
             
             # 3. 准备代码分析结果（如果启用且有 repo_id）
             code_analysis_context = ""
@@ -187,7 +216,7 @@ class AgentManager:
                     all_field_names = list(all_fields_map.keys())
                     
                     # 分词，获取查询中的关键词
-                    words = query.split()
+                    words = user_query.split()
                     
                     # 去重，避免重复分析
                     analyzed_fields = set()
@@ -272,7 +301,7 @@ class AgentManager:
                         # 获取与查询相关的代码组件
                         components = await code_analyzer.search_components(
                             repository_id, # 使用传入的 repository_id
-                            query,
+                            user_query,
                             limit=3 # 限制结果数量
                         )
                         if components:
@@ -303,7 +332,7 @@ class AgentManager:
             # chat_history = [] # 移除旧的 chat_history 逻辑
             
             # 5. 构建传递给智能体的消息内容
-            initial_message_content = f"用户问题: {query}\n\n"
+            initial_message_content = f"用户问题: {user_query}\n\n"
             if retrieval_context:
                 initial_message_content += f"检索到的相关文档:\n{retrieval_context}\n"
             if code_analysis_context:
@@ -321,7 +350,7 @@ class AgentManager:
             self.response_agent.reset()
 
             # a. 用户代理 -> 检索代理
-            retrieval_message = "\n用户问题: " + query + "\n\n"
+            retrieval_message = "\n用户问题: " + user_query + "\n\n"
             retrieval_message += "请分析问题并确定需要检索哪些信息。\n"
             # 使用普通拼接而不是 f-string 表达式
             if retrieval_context:
@@ -338,7 +367,7 @@ class AgentManager:
 
 
             # b. 用户代理 -> 分析代理
-            analysis_message = "\n用户问题: " + query + "\n\n"
+            analysis_message = "\n用户问题: " + user_query + "\n\n"
             analysis_message += "检索代理的分析/结果:\n" + retrieval_reply + "\n\n"
             analysis_message += "请分析这些信息，找出关键洞见和模式。分析完成后回复 \"TERMINATE\"。"
 
@@ -353,7 +382,7 @@ class AgentManager:
             # c. 用户代理 -> 代码分析代理 (如果启用)
             code_analysis_reply = ""
             if use_code_analysis and (code_analysis_context or code_repo_context):
-                code_message = "\n用户问题: " + query + "\n\n"
+                code_message = "\n用户问题: " + user_query + "\n\n"
                 code_message += "代码分析上下文:\n" + code_analysis_context + "\n"
                 if code_repo_context:
                     code_message += code_repo_context + "\n"
@@ -370,7 +399,7 @@ class AgentManager:
                 # code_analysis_reply = self.code_analyst_agent.last_message(self.user_proxy)["content"]
 
             # d. 用户代理 -> 回复生成代理
-            response_message = "\n用户问题: " + query + "\n\n"
+            response_message = "\n用户问题: " + user_query + "\n\n"
             response_message += "检索代理的分析:\n" + retrieval_reply + "\n\n"
             response_message += "信息分析:\n" + analysis_reply + "\n\n"
             if code_analysis_reply:

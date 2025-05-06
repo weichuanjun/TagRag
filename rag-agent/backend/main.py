@@ -18,6 +18,8 @@ from models import create_tables, get_db, CodeRepository, KnowledgeBase
 from code_analysis_routes import router as code_analysis_router
 # 导入知识库管理模块
 from knowledge_base_routes import router as knowledge_base_router
+# 导入Agent Prompt管理模块
+from agent_prompt_routes import router as agent_prompt_router
 
 # 配置日志
 logging.basicConfig(
@@ -56,6 +58,8 @@ vector_store_cache = {}
 app.include_router(code_analysis_router)
 # 添加知识库管理路由
 app.include_router(knowledge_base_router)
+# 添加Agent Prompt管理路由
+app.include_router(agent_prompt_router)
 
 # 确保数据库和表已创建
 create_tables()
@@ -65,6 +69,7 @@ class QuestionRequest(BaseModel):
     query: str
     knowledge_base_id: Optional[int] = None
     use_code_analysis: bool = False
+    prompt_configs: Optional[Dict[str, str]] = None
 
 # 文档上传请求模型
 class DocumentUploadRequest(BaseModel):
@@ -146,6 +151,12 @@ async def get_documents(repository_id: Optional[int] = None, db = Depends(get_db
 async def ask_question(request: QuestionRequest):
     """处理用户问题，支持基于特定知识库的问答"""
     try:
+        # 记录请求参数
+        logger.info(f"收到问题请求: {request.query}")
+        logger.info(f"知识库ID: {request.knowledge_base_id}")
+        logger.info(f"是否使用代码分析: {request.use_code_analysis}")
+        logger.info(f"提示词配置: {request.prompt_configs}")
+        
         # 获取知识库ID
         knowledge_base_id = request.knowledge_base_id
         
@@ -199,7 +210,8 @@ async def ask_question(request: QuestionRequest):
             code_analyzer,
             vector_store,
             repository_id,
-            knowledge_base_id
+            knowledge_base_id,
+            request.prompt_configs
         )
         
         # 获取思考过程
