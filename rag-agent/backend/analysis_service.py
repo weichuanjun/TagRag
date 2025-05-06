@@ -730,4 +730,69 @@ class CodeAnalysisService:
             
         except Exception as e:
             logger.error(f"分析字段影响时出错: {str(e)}")
-            raise e 
+            raise e
+    
+    async def get_file_components(self, repo_id: int, file_path: str) -> List[Dict[str, Any]]:
+        """获取特定文件中的组件列表
+        
+        Args:
+            repo_id: 仓库ID
+            file_path: 文件路径
+            
+        Returns:
+            List[Dict]: 文件中的组件列表
+        """
+        try:
+            # 规范化文件路径
+            file_path = file_path.lstrip('/')
+            logger.info(f"获取文件组件: repo_id={repo_id}, path={file_path}")
+            
+            # 首先获取文件ID
+            file = self.db_session.query(CodeFile).filter(
+                CodeFile.repository_id == repo_id,
+                CodeFile.file_path == file_path
+            ).first()
+            
+            if not file:
+                # 尝试查找包含此路径的文件（可能是部分路径）
+                file = self.db_session.query(CodeFile).filter(
+                    CodeFile.repository_id == repo_id,
+                    CodeFile.file_path.endswith(file_path)
+                ).first()
+                
+                if not file:
+                    # 尝试模糊匹配
+                    file = self.db_session.query(CodeFile).filter(
+                        CodeFile.repository_id == repo_id,
+                        CodeFile.file_path.like(f'%{file_path}%')
+                    ).first()
+            
+            if not file:
+                logger.warning(f"找不到文件: repo_id={repo_id}, path={file_path}")
+                return []
+            
+            logger.info(f"找到文件: {file.file_path}")
+            
+            # 获取文件中的所有组件
+            components = self.db_session.query(CodeComponent).filter(
+                CodeComponent.file_id == file.id
+            ).order_by(
+                CodeComponent.start_line
+            ).all()
+            
+            logger.info(f"在文件 {file.file_path} 中找到 {len(components)} 个组件")
+            
+            return [
+                {
+                    "id": comp.id,
+                    "name": comp.name,
+                    "type": comp.type,
+                    "start_line": comp.start_line,
+                    "end_line": comp.end_line,
+                    "file_path": file.file_path  # 使用数据库中的完整路径
+                }
+                for comp in components
+            ]
+        except Exception as e:
+            logger.error(f"获取文件组件时出错: {str(e)}")
+            return [] 

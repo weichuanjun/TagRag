@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import logging
 
-from models import get_db, KnowledgeBase, CodeRepository  # 添加CodeRepository导入
+from models import get_db, KnowledgeBase, CodeRepository, CodeFile  # 添加CodeRepository和CodeFile导入
 from enhanced_code_analyzer import EnhancedCodeAnalyzer
 from analysis_service import CodeAnalysisService
 from config import get_autogen_config  # 使用现有配置管理
@@ -339,4 +339,70 @@ async def create_example_repository(db: Session = Depends(get_db)):
         logger.error(f"创建示例代码库失败: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"创建示例代码库失败: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"创建示例代码库失败: {str(e)}")
+
+@router.get("/files")
+async def get_file_content(
+    path: str,
+    repo_id: int,
+    db: Session = Depends(get_db)
+):
+    """获取文件内容"""
+    service = CodeAnalysisService(db)
+    
+    try:
+        # 验证仓库是否存在
+        repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+        if not repo:
+            raise HTTPException(status_code=404, detail=f"找不到ID为{repo_id}的代码库")
+        
+        # 规范化文件路径 - 确保不以/开头
+        path = path.lstrip('/')
+        logger.info(f"正在获取文件: 仓库ID={repo_id}, 路径={path}, 仓库路径={repo.path}")
+        
+        # 组合完整文件路径
+        full_path = os.path.join(repo.path, path)
+        logger.info(f"完整文件路径: {full_path}")
+        
+        # 检查文件是否存在
+        if not os.path.isfile(full_path):
+            # 尝试在数据库中查找文件
+            file = db.query(CodeFile).filter(
+                CodeFile.repository_id == repo_id,
+                CodeFile.file_path == path
+            ).first()
+            
+            if file and os.path.isfile(os.path.join(repo.path, file.file_path)):
+                # 使用数据库中的路径
+                full_path = os.path.join(repo.path, file.file_path)
+                logger.info(f"使用数据库中的路径: {full_path}")
+            else:
+                # 尝试查找匹配的文件
+                matching_files = list(filter(
+                    lambda f: f.endswith(path),
+                    [os.path.join(dp, f) for dp, dn, filenames in os.walk(repo.path) for f in filenames]
+                ))
+                
+                if matching_files:
+                    full_path = matching_files[0]
+                    logger.info(f"找到匹配文件: {full_path}")
+                else:
+                    logger.error(f"文件不存在: {path}")
+                    raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
+        
+        # 读取文件内容
+        with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        
+        # 获取文件中的组件
+        components = await service.get_file_components(repo_id, path)
+        
+        return {
+            "content": content,
+            "components": components,
+            "path": path,
+            "description": f"文件: {path}"
+        }
+    except Exception as e:
+        logger.error(f"获取文件内容时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取文件内容失败: {str(e)}") 
