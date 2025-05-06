@@ -77,7 +77,7 @@ const CodeAnalysisPage = () => {
         } finally {
             setKbLoading(false);
         }
-    }, [selectedKnowledgeBase]);
+    }, []);
 
     // 加载特定知识库中的代码库
     const fetchRepositoriesByKnowledgeBase = useCallback(async (kbId) => {
@@ -117,7 +117,7 @@ const CodeAnalysisPage = () => {
         } finally {
             setLoading(false);
         }
-    }, [currentRepo]);
+    }, []);
 
     // 加载仓库摘要
     const fetchRepoSummary = useCallback(async (repoId) => {
@@ -142,7 +142,7 @@ const CodeAnalysisPage = () => {
     // 首次加载
     useEffect(() => {
         fetchKnowledgeBases();
-    }, [fetchKnowledgeBases]);
+    }, []);
 
     // 当选择的知识库变化时
     useEffect(() => {
@@ -151,14 +151,14 @@ const CodeAnalysisPage = () => {
         } else {
             fetchRepositories();
         }
-    }, [selectedKnowledgeBase, fetchRepositoriesByKnowledgeBase, fetchRepositories]);
+    }, [selectedKnowledgeBase]);
 
     // 当代码库变化时
     useEffect(() => {
         if (currentRepo) {
             fetchRepoSummary(currentRepo.id);
         }
-    }, [currentRepo, fetchRepoSummary]);
+    }, [currentRepo]);
 
     // 搜索代码
     const handleSearch = async (query) => {
