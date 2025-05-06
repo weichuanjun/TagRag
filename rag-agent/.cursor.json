@@ -1,0 +1,41 @@
+{
+    "rules": [
+        {
+            "pattern": "**/*.py",
+            "formatter": "black",
+            "linter": "flake8"
+        },
+        {
+            "pattern": "**/*.js",
+            "formatter": "prettier"
+        },
+        {
+            "pattern": "**/*.jsx",
+            "formatter": "prettier"
+        },
+        {
+            "pattern": "**/*.ts",
+            "formatter": "prettier"
+        },
+        {
+            "pattern": "**/*.tsx",
+            "formatter": "prettier"
+        },
+        {
+            "pattern": "**/*.json",
+            "formatter": "prettier"
+        },
+        {
+            "pattern": "**/*.md",
+            "formatter": "prettier"
+        },
+        {
+            "pattern": "**/*.css",
+            "formatter": "prettier"
+        },
+        {
+            "pattern": "**/*.html",
+            "formatter": "prettier"
+        }
+    ]
+}
