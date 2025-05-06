@@ -10,13 +10,22 @@ warnings.filterwarnings("ignore")
 class DocumentProcessor:
     """处理各种文档格式并进行分块处理的类"""
     
-    def __init__(self):
+    def __init__(self, vector_store=None):
         # 文本分割配置
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50,
             separators=["\n\n", "\n", "。", "，", ".", " ", ""]
         )
+        self.vector_store = vector_store
+    
+    async def process_document(self, file_path: str, chunk_size: int = 1000):
+        """处理文档并添加到向量存储"""
+        # 更新文本分割器的块大小
+        self.text_splitter.chunk_size = chunk_size
+        
+        # 调用处理文件的方法
+        return await self.process_file(file_path, self.vector_store)
     
     async def process_file(self, file_path: str, vector_store):
         """处理文件并添加到向量存储"""

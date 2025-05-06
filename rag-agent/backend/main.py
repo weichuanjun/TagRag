@@ -1,192 +1,149 @@
 import os
-import uvicorn
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+import logging
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from typing import List, Optional
-import aiofiles
-import time
-import json
+import uvicorn
 from pydantic import BaseModel
+from typing import Dict, List, Any, Optional
+import json
 
-# 设置tokenizers环境变量，避免警告
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-from document_processor import DocumentProcessor
+# 导入原有功能模块
 from vector_store import VectorStore
+from document_processor import DocumentProcessor
 from agent_manager import AgentManager
 from code_analyzer import CodeAnalyzer
 
-# 导入配置
-from config import UPLOADS_DIR, VECTOR_DB_DIR, CODE_ANALYSIS_DIR
+# 导入新增的代码分析模块
+from models import create_tables, get_db
+from code_analysis_routes import router as code_analysis_router
 
-# 初始化应用
-app = FastAPI(title="RAG Agent API", description="基于AutoGen的智能检索问答系统")
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("app.log")
+    ]
+)
 
-# 允许CORS
+logger = logging.getLogger(__name__)
+
+# 创建FastAPI应用
+app = FastAPI(title="RAG Agent API", description="基于AutoGen的多智能体RAG系统")
+
+# 添加CORS中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境中应该设置具体的源
+    allow_origins=["*"],  # 允许所有源，生产环境应限制
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 确保上传目录存在
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-os.makedirs(VECTOR_DB_DIR, exist_ok=True)
-os.makedirs(CODE_ANALYSIS_DIR, exist_ok=True)
-
-# 挂载静态文件
-app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
-
-# 初始化处理器
-document_processor = DocumentProcessor()
+# 初始化组件
 vector_store = VectorStore()
+document_processor = DocumentProcessor(vector_store)
+code_analyzer_path = os.path.join(os.path.dirname(__file__), "data/code_analysis")
+os.makedirs(code_analyzer_path, exist_ok=True)
+code_analyzer = CodeAnalyzer(code_analyzer_path)
 agent_manager = AgentManager(vector_store)
-code_analyzer = CodeAnalyzer(CODE_ANALYSIS_DIR)
 
-# 模型类
-class Question(BaseModel):
+# 添加代码分析路由
+app.include_router(code_analysis_router)
+
+# 确保数据库和表已创建
+create_tables()
+
+# 问答请求模型
+class QuestionRequest(BaseModel):
     query: str
     use_code_analysis: bool = False
 
-class CodeUpload(BaseModel):
-    repo_url: Optional[str] = None
-    local_path: Optional[str] = None
-
-# 路由
+# API端点
 @app.get("/")
-async def root():
-    return {"message": "RAG Agent API 正在运行"}
+async def read_root():
+    return {"message": "欢迎使用RAG Agent API"}
 
-@app.post("/upload/file")
-async def upload_file(
-    file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None
-):
+@app.post("/upload-document")
+async def upload_document(file_path: str, chunk_size: int = 1000):
+    """上传文档并处理"""
     try:
-        # 生成唯一文件名
-        timestamp = int(time.time())
-        file_extension = os.path.splitext(file.filename)[1]
-        unique_filename = f"{timestamp}{file_extension}"
-        file_path = os.path.join(UPLOADS_DIR, unique_filename)
-        
-        # 保存上传文件
-        async with aiofiles.open(file_path, 'wb') as out_file:
-            content = await file.read()
-            await out_file.write(content)
-        
-        # 在后台处理文档
-        if background_tasks:
-            background_tasks.add_task(
-                document_processor.process_file,
-                file_path, 
-                vector_store
-            )
-        
-        return {
-            "filename": file.filename,
-            "saved_as": unique_filename,
-            "status": "正在处理文档，请稍候",
-            "file_path": file_path
-        }
-    
+        result = await document_processor.process_document(file_path, chunk_size)
+        return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"处理文档时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"处理文档失败: {str(e)}")
 
-@app.post("/upload/code")
-async def upload_code(code_upload: CodeUpload, background_tasks: BackgroundTasks):
+@app.post("/upload-code")
+async def upload_code(repo_path: str):
+    """分析代码库"""
     try:
-        if code_upload.repo_url:
-            # 如果提供了Git仓库URL，克隆仓库
-            repo_path = os.path.join(CODE_ANALYSIS_DIR, f"repo_{int(time.time())}")
-            os.system(f"git clone {code_upload.repo_url} {repo_path}")
-            code_path = repo_path
-        elif code_upload.local_path:
-            # 如果提供了本地路径，使用它
-            code_path = code_upload.local_path
-        else:
-            raise HTTPException(status_code=400, detail="必须提供repo_url或local_path")
-        
-        # 在后台分析代码
-        background_tasks.add_task(
-            code_analyzer.analyze_code,
-            code_path
-        )
-        
-        return {
-            "status": "正在分析代码，请稍候",
-            "code_path": code_path
-        }
-    
+        result = await code_analyzer.analyze_code(repo_path)
+        return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"分析代码时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"分析代码失败: {str(e)}")
+
+@app.get("/documents")
+async def get_documents():
+    """获取已处理的文档列表"""
+    try:
+        docs = await vector_store.get_document_list()
+        return docs
+    except Exception as e:
+        logger.error(f"获取文档列表时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取文档列表失败: {str(e)}")
 
 @app.post("/ask")
-async def ask_question(question: Question):
+async def ask_question(request: QuestionRequest):
+    """处理用户问题"""
     try:
-        # 使用多智能体系统回答问题
+        # 使用智能体生成回答
         answer = await agent_manager.generate_answer(
-            question.query,
-            use_code_analysis=question.use_code_analysis,
-            code_analyzer=code_analyzer if question.use_code_analysis else None
+            request.query, 
+            request.use_code_analysis,
+            code_analyzer if request.use_code_analysis else None
         )
         
         # 获取思考过程
         thinking_process = agent_manager.get_thinking_process()
         
         return {
-            "query": question.query,
             "answer": answer,
             "thinking_process": thinking_process
         }
-    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"生成回答时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"生成回答失败: {str(e)}")
 
-@app.get("/documents")
-async def list_documents():
-    """获取已处理的文档列表"""
+@app.get("/code-fields")
+async def get_code_fields():
+    """获取代码字段列表"""
     try:
-        doc_list = await vector_store.get_document_list()
-        return {
-            "documents": doc_list
-        }
+        fields = await code_analyzer.get_all_fields()
+        return {"fields": fields}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取代码字段时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取代码字段失败: {str(e)}")
 
-# 添加删除文档的功能
-@app.delete("/documents/{document_id}")
-async def delete_document(document_id: str):
-    """删除文档"""
+@app.get("/field-impact")
+async def get_field_impact(field_name: str):
+    """获取字段影响"""
     try:
-        # 从元数据中删除
-        if document_id in vector_store.document_metadata["documents"]:
-            del vector_store.document_metadata["documents"][document_id]
-            vector_store._save_metadata()
-            
-            # 实际情况下可能还需要从向量数据库中删除相关向量
-            # 这里简化处理，假设下次重建集合
-            
-            return {"status": "success", "message": f"文档 {document_id} 已删除"}
-        else:
-            raise HTTPException(status_code=404, detail=f"文档 {document_id} 不存在")
+        impact = await code_analyzer.get_field_impact(field_name)
+        return {"impact": impact}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"获取字段影响时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取字段影响失败: {str(e)}")
 
-# 添加获取思考过程的端点
-@app.get("/thinking-process")
-async def get_thinking_process():
-    """获取最后一次智能体思考过程"""
-    try:
-        thinking_process = agent_manager.get_thinking_process()
-        return {
-            "thinking_process": thinking_process
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# 中间件用于请求日志
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"请求: {request.method} {request.url}")
+    response = await call_next(request)
+    return response
 
+# 主函数
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
