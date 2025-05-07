@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import {
     Table, Card, Tabs, Button, Modal, Spin, Tree, Tag, Space, Input,
     Collapse, message, Progress, Tooltip, Select, Empty, Divider, Row, Col,
@@ -60,6 +60,95 @@ const typeIcons = {
     "react_component": <RocketOutlined />
 };
 
+// 使用React.memo包装的重要组件列表，避免不必要的重新渲染
+const ImportantComponentsList = memo(({
+    repoSummary,
+    componentNameSearch,
+    setComponentNameSearch,
+    loading,
+    viewComponentDetails
+}) => {
+    const filteredComponents = componentNameSearch && repoSummary?.important_components
+        ? repoSummary.important_components.filter(comp =>
+            comp.name.toLowerCase().includes(componentNameSearch.toLowerCase()))
+        : (repoSummary?.important_components || []);
+
+    return (
+        <div style={{ padding: '8px 0' }}>
+            <div style={{ padding: '0 12px', marginBottom: 10 }}>
+                <Input.Search
+                    placeholder="搜索组件名称"
+                    onSearch={(value) => setComponentNameSearch(value)}
+                    allowClear
+                    onChange={(e) => {
+                        if (!e.target.value) {
+                            setComponentNameSearch('');
+                        }
+                    }}
+                />
+            </div>
+            {repoSummary ? (
+                <>
+                    {loading ? (
+                        <div style={{ padding: '20px', textAlign: 'center' }}>
+                            <Spin tip="加载组件..." />
+                        </div>
+                    ) : (
+                        <List
+                            dataSource={filteredComponents}
+                            renderItem={item => (
+                                <List.Item
+                                    key={item.id}
+                                    onClick={() => viewComponentDetails(item.id)}
+                                    style={{
+                                        cursor: 'pointer',
+                                        background: item._selected ? '#e6f7ff' : 'transparent',
+                                        padding: '8px 12px'
+                                    }}
+                                    className="component-list-item"
+                                >
+                                    <List.Item.Meta
+                                        avatar={typeIcons[item.type] || <CodeOutlined />}
+                                        title={
+                                            <Space>
+                                                <span>{item.name}</span>
+                                                <Tooltip title={`重要性: ${item.importance?.toFixed(2) || 0}`}>
+                                                    <Progress
+                                                        percent={Math.min((item.importance || 0) * 20, 100)}
+                                                        size="small"
+                                                        showInfo={false}
+                                                        style={{ width: 60 }}
+                                                    />
+                                                </Tooltip>
+                                            </Space>
+                                        }
+                                        description={
+                                            <>
+                                                <Tag color="blue">{item.type}</Tag>
+                                                <span style={{ fontSize: '0.85em', marginLeft: '8px', color: '#888', wordBreak: 'break-all' }}>{item.file_path || '未知文件'}</span>
+                                            </>
+                                        }
+                                    />
+                                </List.Item>
+                            )}
+                            pagination={{
+                                pageSize: 50,
+                                size: 'small',
+                                showSizeChanger: true,
+                                pageSizeOptions: ['50', '100', '200', '500', '1000'],
+                                showTotal: (total) => `共 ${total} 个组件`
+                            }}
+                            style={{ padding: '0 0 12px 0', overflowX: 'hidden' }}
+                        />
+                    )}
+                </>
+            ) : (
+                <Empty description="暂无代码库数据" />
+            )}
+        </div>
+    );
+});
+
 const CodeAnalysisPage = () => {
     // 状态管理
     const [repositories, setRepositories] = useState([]);
@@ -86,6 +175,10 @@ const CodeAnalysisPage = () => {
     const [componentNameSearch, setComponentNameSearch] = useState('');
     const [activeNavTab, setActiveNavTab] = useState('structure'); // 当前激活的导航标签页
     const [expandedKeys, setExpandedKeys] = useState([]); // 目录树已展开的节点
+    const [componentCache, setComponentCache] = useState({});
+    const [dependenciesCache, setDependenciesCache] = useState({});
+    const [impactAnalysisCache, setImpactAnalysisCache] = useState({});
+    const [fileContentCache, setFileContentCache] = useState({});
 
     // 加载知识库列表
     const fetchKnowledgeBases = useCallback(async () => {
@@ -249,115 +342,67 @@ const CodeAnalysisPage = () => {
 
     // 查看组件详情
     const viewComponentDetails = async (componentId) => {
+        // 如果已经选中该组件，不进行任何操作
+        if (selectedComponent === componentId) {
+            return;
+        }
+
+        setSelectedComponent(componentId);
+
+        // 如果已经有缓存的组件详情，直接使用缓存
+        if (componentCache[componentId]) {
+            setComponentDetails(componentCache[componentId]);
+
+            // 仅更新选中状态，不重新加载整个组件列表
+            if (repoSummary && repoSummary.important_components) {
+                const updatedComponents = repoSummary.important_components.map(comp => ({
+                    ...comp,
+                    _selected: comp.id === componentId
+                }));
+                setRepoSummary(prev => ({
+                    ...prev,
+                    important_components: updatedComponents
+                }));
+            }
+            return;
+        }
+
         setLoading(true);
+
         try {
+            // 获取组件详情
             const response = await axios.get(`/code/components/${componentId}`);
-            setSelectedComponent(componentId);
-            setComponentDetails(response.data);
+            const componentData = response.data;
 
-            // 构建依赖关系图数据
-            const nodes = [];
-            const edges = [];
+            // 更新组件缓存
+            setComponentCache(prev => ({
+                ...prev,
+                [componentId]: componentData
+            }));
 
-            // 中心节点（当前组件）
-            nodes.push({
-                id: `component-${response.data.id}`,
-                data: {
-                    label: (
-                        <div style={{ padding: '5px' }}>
-                            {typeIcons[response.data.type] || <CodeOutlined />}
-                            <span style={{ marginLeft: '5px' }}>{response.data.name}</span>
-                        </div>
-                    )
-                },
-                position: { x: 250, y: 100 },
-                style: {
-                    background: '#1890ff',
-                    color: 'white',
-                    border: '1px solid #096dd9',
-                    borderRadius: '3px'
-                }
-            });
+            setComponentDetails(componentData);
 
-            // 添加依赖节点
-            response.data.dependencies.forEach((dep, index) => {
-                const angle = (index * (Math.PI * 2)) / response.data.dependencies.length;
-                const x = 250 + Math.cos(angle) * 150;
-                const y = 100 + Math.sin(angle) * 150;
+            // 更新组件选择状态
+            if (repoSummary && repoSummary.important_components) {
+                const updatedComponents = repoSummary.important_components.map(comp => ({
+                    ...comp,
+                    _selected: comp.id === componentId
+                }));
+                setRepoSummary(prev => ({
+                    ...prev,
+                    important_components: updatedComponents
+                }));
+            }
 
-                nodes.push({
-                    id: `dependency-${dep.id}`,
-                    data: {
-                        label: (
-                            <div style={{ padding: '3px' }}>
-                                {typeIcons[dep.type] || <CodeOutlined />}
-                                <span style={{ marginLeft: '5px', fontSize: '0.85em' }}>{dep.name}</span>
-                            </div>
-                        )
-                    },
-                    position: { x, y },
-                    style: {
-                        background: '#52c41a',
-                        color: 'white',
-                        border: '1px solid #389e0d',
-                        borderRadius: '3px',
-                        fontSize: '0.9em'
-                    }
-                });
+            // 尝试加载依赖关系
+            await fetchComponentDependencies(componentId);
 
-                edges.push({
-                    id: `edge-to-${dep.id}`,
-                    source: `component-${response.data.id}`,
-                    target: `dependency-${dep.id}`,
-                    animated: true,
-                    style: { stroke: '#52c41a' }
-                });
-            });
-
-            // 添加被依赖节点
-            response.data.dependents.forEach((dep, index) => {
-                const angle = (index * (Math.PI * 2)) / response.data.dependents.length;
-                const x = 250 + Math.cos(angle) * 150;
-                const y = 250 + Math.sin(angle) * 150;
-
-                nodes.push({
-                    id: `dependent-${dep.id}`,
-                    data: {
-                        label: (
-                            <div style={{ padding: '3px' }}>
-                                {typeIcons[dep.type] || <CodeOutlined />}
-                                <span style={{ marginLeft: '5px', fontSize: '0.85em' }}>{dep.name}</span>
-                            </div>
-                        )
-                    },
-                    position: { x, y },
-                    style: {
-                        background: '#f5222d',
-                        color: 'white',
-                        border: '1px solid #cf1322',
-                        borderRadius: '3px',
-                        fontSize: '0.9em'
-                    }
-                });
-
-                edges.push({
-                    id: `edge-from-${dep.id}`,
-                    source: `dependent-${dep.id}`,
-                    target: `component-${response.data.id}`,
-                    animated: true,
-                    style: { stroke: '#f5222d' }
-                });
-            });
-
-            setDependencies({ nodes, edges });
-
-            // 分析影响
-            const impactResponse = await axios.get(`/code/components/${componentId}/impact`);
-            setImpactAnalysis(impactResponse.data);
+            // 尝试加载影响分析
+            await fetchImpactAnalysis(componentId);
 
         } catch (error) {
+            console.error('获取组件详情失败:', error);
             message.error('获取组件详情失败');
-            console.error(error);
         } finally {
             setLoading(false);
         }
@@ -870,6 +915,182 @@ const CodeAnalysisPage = () => {
         });
     }, [repoSummary, componentFilters, componentNameSearch]);
 
+    // 获取组件依赖关系
+    const fetchComponentDependencies = async (componentId) => {
+        // 如果缓存中已有依赖数据，直接使用缓存
+        if (dependenciesCache[componentId]) {
+            setDependencies(dependenciesCache[componentId]);
+            return;
+        }
+
+        try {
+            const response = await axios.get(`/code/components/${componentId}`);
+
+            // 构建依赖关系图数据
+            const nodes = [];
+            const edges = [];
+
+            // 中心节点（当前组件）
+            nodes.push({
+                id: `component-${response.data.id}`,
+                data: {
+                    label: (
+                        <div style={{ padding: '5px' }}>
+                            {typeIcons[response.data.type] || <CodeOutlined />}
+                            <span style={{ marginLeft: '5px' }}>{response.data.name}</span>
+                        </div>
+                    )
+                },
+                position: { x: 250, y: 100 },
+                style: {
+                    background: '#1890ff',
+                    color: 'white',
+                    border: '1px solid #096dd9',
+                    borderRadius: '3px'
+                }
+            });
+
+            // 添加依赖节点
+            response.data.dependencies.forEach((dep, index) => {
+                const angle = (index * (Math.PI * 2)) / response.data.dependencies.length;
+                const x = 250 + Math.cos(angle) * 150;
+                const y = 100 + Math.sin(angle) * 150;
+
+                nodes.push({
+                    id: `dependency-${dep.id}`,
+                    data: {
+                        label: (
+                            <div style={{ padding: '3px' }}>
+                                {typeIcons[dep.type] || <CodeOutlined />}
+                                <span style={{ marginLeft: '5px', fontSize: '0.85em' }}>{dep.name}</span>
+                            </div>
+                        )
+                    },
+                    position: { x, y },
+                    style: {
+                        background: '#52c41a',
+                        color: 'white',
+                        border: '1px solid #389e0d',
+                        borderRadius: '3px',
+                        fontSize: '0.9em'
+                    }
+                });
+
+                edges.push({
+                    id: `edge-to-${dep.id}`,
+                    source: `component-${response.data.id}`,
+                    target: `dependency-${dep.id}`,
+                    animated: true,
+                    style: { stroke: '#52c41a' }
+                });
+            });
+
+            // 添加被依赖节点
+            response.data.dependents.forEach((dep, index) => {
+                const angle = (index * (Math.PI * 2)) / response.data.dependents.length;
+                const x = 250 + Math.cos(angle) * 150;
+                const y = 250 + Math.sin(angle) * 150;
+
+                nodes.push({
+                    id: `dependent-${dep.id}`,
+                    data: {
+                        label: (
+                            <div style={{ padding: '3px' }}>
+                                {typeIcons[dep.type] || <CodeOutlined />}
+                                <span style={{ marginLeft: '5px', fontSize: '0.85em' }}>{dep.name}</span>
+                            </div>
+                        )
+                    },
+                    position: { x, y },
+                    style: {
+                        background: '#f5222d',
+                        color: 'white',
+                        border: '1px solid #cf1322',
+                        borderRadius: '3px',
+                        fontSize: '0.9em'
+                    }
+                });
+
+                edges.push({
+                    id: `edge-from-${dep.id}`,
+                    source: `dependent-${dep.id}`,
+                    target: `component-${response.data.id}`,
+                    animated: true,
+                    style: { stroke: '#f5222d' }
+                });
+            });
+
+            const dependencyData = { nodes, edges };
+            setDependencies(dependencyData);
+
+            // 更新缓存
+            setDependenciesCache(prev => ({
+                ...prev,
+                [componentId]: dependencyData
+            }));
+        } catch (error) {
+            console.error('获取组件依赖关系失败:', error);
+        }
+    };
+
+    // 获取组件影响分析
+    const fetchImpactAnalysis = async (componentId) => {
+        // 如果缓存中已有影响分析数据，直接使用缓存
+        if (impactAnalysisCache[componentId]) {
+            setImpactAnalysis(impactAnalysisCache[componentId]);
+            return;
+        }
+
+        try {
+            const impactResponse = await axios.get(`/code/components/${componentId}/impact`);
+            setImpactAnalysis(impactResponse.data);
+
+            // 更新缓存
+            setImpactAnalysisCache(prev => ({
+                ...prev,
+                [componentId]: impactResponse.data
+            }));
+        } catch (error) {
+            console.error('获取影响分析失败:', error);
+        }
+    };
+
+    // 搜索结果列表组件
+    const SearchResultsList = memo(({
+        searchResults,
+        viewComponentDetails
+    }) => {
+        return (
+            <List
+                dataSource={searchResults}
+                renderItem={item => (
+                    <List.Item
+                        key={item.id}
+                        onClick={() => viewComponentDetails(item.id)}
+                        style={{
+                            cursor: 'pointer',
+                            padding: '12px 16px',
+                            borderBottom: '1px solid #f0f0f0'
+                        }}
+                        className="component-list-item"
+                    >
+                        <List.Item.Meta
+                            avatar={typeIcons[item.type] || <CodeOutlined />}
+                            title={item.name}
+                            description={
+                                <Space>
+                                    <Tag color="blue">{item.type}</Tag>
+                                    <span>{item.file}</span>
+                                </Space>
+                            }
+                        />
+                    </List.Item>
+                )}
+                locale={{ emptyText: '无搜索结果' }}
+            />
+        );
+    });
+
     const repoSelector = (
         <Space style={{ marginBottom: 16 }}>
             <span style={{ fontWeight: 'bold' }}>知识库:</span>
@@ -991,7 +1212,6 @@ const CodeAnalysisPage = () => {
                             </Space>
                         }
                         bodyStyle={{ padding: 0, maxHeight: 600, overflow: 'auto', overflowX: 'hidden' }}
-                        loading={loading}
                         bordered={true}
                         style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}
                     >
@@ -1013,10 +1233,17 @@ const CodeAnalysisPage = () => {
                                         treeData={buildTreeData(directoryTree)}
                                         onSelect={(keys, info) => {
                                             if (info.node.isLeaf) {
+                                                const filePath = info.node.key;
+
+                                                // 检查缓存中是否已有文件内容
+                                                if (fileContentCache[filePath]) {
+                                                    setComponentDetails(fileContentCache[filePath]);
+                                                    setSelectedComponent(null);
+                                                    return;
+                                                }
+
                                                 setLoading(true);
                                                 try {
-                                                    const filePath = info.node.key;
-
                                                     // 从API获取真实文件内容而不是创建模拟数据
                                                     axios.get(`/code/files`, {
                                                         params: {
@@ -1025,7 +1252,7 @@ const CodeAnalysisPage = () => {
                                                         }
                                                     })
                                                         .then(response => {
-                                                            setComponentDetails({
+                                                            const fileDetails = {
                                                                 id: `file-${filePath}`,
                                                                 name: info.node.title,
                                                                 type: 'file',
@@ -1033,15 +1260,22 @@ const CodeAnalysisPage = () => {
                                                                 code: response.data.content || '// 无内容',
                                                                 components: response.data.components || [],
                                                                 description: response.data.description || '文件内容'
-                                                            });
+                                                            };
 
+                                                            // 更新缓存
+                                                            setFileContentCache(prev => ({
+                                                                ...prev,
+                                                                [filePath]: fileDetails
+                                                            }));
+
+                                                            setComponentDetails(fileDetails);
                                                             setSelectedComponent(null);
                                                             message.success(`已加载 ${info.node.title} 文件内容`);
                                                         })
                                                         .catch(error => {
                                                             console.error('获取文件内容失败:', error);
                                                             message.error('获取文件内容失败');
-                                                            setComponentDetails({
+                                                            const errorDetails = {
                                                                 id: `file-${filePath}`,
                                                                 name: info.node.title,
                                                                 type: 'file',
@@ -1049,7 +1283,14 @@ const CodeAnalysisPage = () => {
                                                                 code: '// 无法加载文件内容',
                                                                 components: [],
                                                                 description: '无法加载文件内容'
-                                                            });
+                                                            };
+                                                            setComponentDetails(errorDetails);
+
+                                                            // 错误时也缓存，避免重复请求失败的文件
+                                                            setFileContentCache(prev => ({
+                                                                ...prev,
+                                                                [filePath]: errorDetails
+                                                            }));
                                                         })
                                                         .finally(() => {
                                                             setLoading(false);
@@ -1068,83 +1309,20 @@ const CodeAnalysisPage = () => {
                                 )}
                             </TabPane>
                             <TabPane tab="重要组件" key="important">
-                                <div style={{ padding: '8px 0' }}>
-                                    <div style={{ padding: '0 12px', marginBottom: 10 }}>
-                                        <Input.Search
-                                            placeholder="搜索组件名称"
-                                            onSearch={(value) => setComponentNameSearch(value)}
-                                            allowClear
-                                            onChange={(e) => {
-                                                if (!e.target.value) {
-                                                    setComponentNameSearch('');
-                                                }
-                                            }}
-                                        />
-                                    </div>
-                                    {repoSummary ? (
-                                        <>
-                                            {loading ? (
-                                                <div style={{ padding: '20px', textAlign: 'center' }}>
-                                                    <Spin tip="加载组件..." />
-                                                </div>
-                                            ) : (
-                                                <List
-                                                    dataSource={
-                                                        // 确保有数据，如果没有important_components，使用空数组
-                                                        componentNameSearch && repoSummary.important_components ?
-                                                            repoSummary.important_components.filter(comp =>
-                                                                comp.name.toLowerCase().includes(componentNameSearch.toLowerCase()))
-                                                            : (repoSummary.important_components || [])
-                                                    }
-                                                    renderItem={item => (
-                                                        <List.Item
-                                                            key={item.id}
-                                                            onClick={() => viewComponentDetails(item.id)}
-                                                            style={{
-                                                                cursor: 'pointer',
-                                                                background: selectedComponent === item.id ? '#e6f7ff' : 'transparent',
-                                                                padding: '8px 12px'
-                                                            }}
-                                                        >
-                                                            <List.Item.Meta
-                                                                avatar={typeIcons[item.type] || <CodeOutlined />}
-                                                                title={
-                                                                    <Space>
-                                                                        <span>{item.name}</span>
-                                                                        <Tooltip title={`重要性: ${item.importance?.toFixed(2) || 0}`}>
-                                                                            <Progress
-                                                                                percent={Math.min((item.importance || 0) * 20, 100)}
-                                                                                size="small"
-                                                                                showInfo={false}
-                                                                                style={{ width: 60 }}
-                                                                            />
-                                                                        </Tooltip>
-                                                                    </Space>
-                                                                }
-                                                                description={
-                                                                    <>
-                                                                        <Tag color="blue">{item.type}</Tag>
-                                                                        <span style={{ fontSize: '0.85em', marginLeft: '8px', color: '#888', wordBreak: 'break-all' }}>{item.file_path || '未知文件'}</span>
-                                                                    </>
-                                                                }
-                                                            />
-                                                        </List.Item>
-                                                    )}
-                                                    pagination={{
-                                                        pageSize: 50,
-                                                        size: 'small',
-                                                        showSizeChanger: true,
-                                                        pageSizeOptions: ['50', '100', '200', '500', '1000'],
-                                                        showTotal: (total) => `共 ${total} 个组件`
-                                                    }}
-                                                    style={{ padding: '0 0 12px 0', overflowX: 'hidden' }}
-                                                />
-                                            )}
-                                        </>
-                                    ) : (
-                                        <Empty description="暂无代码库数据" />
-                                    )}
-                                </div>
+                                {/* 使用React.memo包装的组件来避免不必要的重新渲染 */}
+                                <ImportantComponentsList
+                                    repoSummary={repoSummary}
+                                    componentNameSearch={componentNameSearch}
+                                    setComponentNameSearch={setComponentNameSearch}
+                                    loading={loading}
+                                    viewComponentDetails={viewComponentDetails}
+                                />
+                            </TabPane>
+                            <TabPane tab="搜索结果" key="search">
+                                <SearchResultsList
+                                    searchResults={searchResults}
+                                    viewComponentDetails={viewComponentDetails}
+                                />
                             </TabPane>
                         </Tabs>
                     </Card>
@@ -1207,6 +1385,13 @@ const CodeAnalysisPage = () => {
                     </div>
                 )}
             </Modal>
+
+            {/* 页面首次加载时，导航区域显示全局loading遮罩 */}
+            {loading && !repoSummary && (
+                <div style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, zIndex: 10, background: 'rgba(255,255,255,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Spin tip="加载中..." />
+                </div>
+            )}
         </div>
     );
 };

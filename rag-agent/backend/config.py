@@ -29,7 +29,7 @@ def get_autogen_config() -> Dict[str, Any]:
     """获取AutoGen的配置，根据环境变量决定使用OpenAI还是Ollama"""
     if USE_OPENAI and OPENAI_API_KEY:
         # 使用OpenAI
-        return {
+        config = {
             "config_list": [
                 {
                     "model": os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
@@ -38,6 +38,13 @@ def get_autogen_config() -> Dict[str, Any]:
             ],
             "temperature": float(os.environ.get("TEMPERATURE", "0.7")),
         }
+        
+        # 添加API基础URL，如果指定了的话
+        api_base = os.environ.get("OPENAI_API_BASE")
+        if api_base:
+            config["config_list"][0]["api_base"] = api_base
+            
+        return config
     else:
         # 使用本地Ollama
         # 尝试简化配置，减少潜在错误
