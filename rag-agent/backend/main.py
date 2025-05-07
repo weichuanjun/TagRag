@@ -8,6 +8,13 @@ from typing import Dict, List, Any, Optional
 import json
 import shutil
 
+# 确保数据目录存在
+os.makedirs("data/db", exist_ok=True)
+os.makedirs("data/vector_db", exist_ok=True)
+
+# 导入配置模块
+from config import VECTOR_DB_DIR
+
 # 导入原有功能模块
 from vector_store import VectorStore
 from document_processor import DocumentProcessor
@@ -20,6 +27,8 @@ from code_analysis_routes import router as code_analysis_router
 from knowledge_base_routes import router as knowledge_base_router
 # 导入Agent Prompt管理模块
 from agent_prompt_routes import router as agent_prompt_router
+# 导入图可视化模块
+from graph_visualizer import router as graph_router
 
 # 配置日志
 logging.basicConfig(
@@ -60,6 +69,8 @@ app.include_router(code_analysis_router)
 app.include_router(knowledge_base_router)
 # 添加Agent Prompt管理路由
 app.include_router(agent_prompt_router)
+# 添加图可视化路由
+app.include_router(graph_router)
 
 # 确保数据库和表已创建
 create_tables()

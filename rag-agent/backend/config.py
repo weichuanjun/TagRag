@@ -34,21 +34,19 @@ def get_autogen_config() -> Dict[str, Any]:
                 {
                     "model": os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
                     "api_key": OPENAI_API_KEY,
-                    "api_base": "https://api.openai.com/v1",  # 明确指定API基础URL
-                    "api_type": "open_ai",  # 明确指定API类型为OpenAI
                 }
             ],
             "temperature": float(os.environ.get("TEMPERATURE", "0.7")),
         }
     else:
-        # 使用本地Ollama（通过OpenAI兼容格式）
+        # 使用本地Ollama
+        # 尝试简化配置，减少潜在错误
+        os.environ["OLLAMA_HOST"] = OLLAMA_HOST  # 设置环境变量
         return {
+            "use_ollama": True,
             "config_list": [
                 {
                     "model": OLLAMA_MODEL,
-                    "api_base": OLLAMA_HOST,
-                    "api_type": "open_ai",  # 必须使用支持的API类型
-                    "api_key": "ollama-key" # 随意值，Ollama不检查但必须提供
                 }
             ],
             "temperature": float(os.environ.get("TEMPERATURE", "0.7")),

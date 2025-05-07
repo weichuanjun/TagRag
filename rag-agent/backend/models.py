@@ -170,19 +170,24 @@ class Document(Base):
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True)
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
     
+    # 添加代码库外键（可选）
+    repository_id = Column(Integer, ForeignKey("code_repositories.id", ondelete="SET NULL"), nullable=True)
+    
     # 关联关系
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
 # 文档块模型
 class DocumentChunk(Base):
-    """文档分块，用于向量检索"""
-    __tablename__ = 'document_chunks'
+    """文档块模型"""
+    __tablename__ = "document_chunks"
     
-    id = Column(Integer, primary_key=True)
-    document_id = Column(Integer, ForeignKey('documents.id'))
-    chunk_index = Column(Integer)
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"))
     content = Column(Text)
-    chunk_metadata = Column(JSON)
+    chunk_index = Column(Integer)
+    chunk_metadata = Column(Text)  # JSON格式的元数据，改名避免与SQLAlchemy保留字冲突
+    page = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.now)
     
     # 关系
     document = relationship("Document", back_populates="chunks")
@@ -209,7 +214,24 @@ class AgentPrompt(Base):
 def create_tables():
     Base.metadata.create_all(bind=engine)
 
+# 删除并重建数据库表 - 添加仅处理Documents表的功能
+def rebuild_document_tables():
+    """仅重建与Document相关的表，保留其他表"""
+    # 删除Document相关表
+    Document.__table__.drop(engine, checkfirst=True)
+    DocumentChunk.__table__.drop(engine, checkfirst=True)
+    
+    # 重新创建表
+    Document.__table__.create(engine)
+    DocumentChunk.__table__.create(engine)
+    
+    print("文档相关表格已重建完成。")
+
 # 如果直接运行此模块，创建数据库表
 if __name__ == "__main__":
-    create_tables()
-    print("数据库表已创建。") 
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "rebuild_docs":
+        rebuild_document_tables()
+    else:
+        create_tables()
+        print("数据库表已创建。") 

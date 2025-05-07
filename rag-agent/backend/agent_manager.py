@@ -39,7 +39,11 @@ class AgentManager:
             name="用户代理",
             human_input_mode="NEVER",
             is_termination_msg=lambda x: "TERMINATE" in x.get("content", ""),
-            code_execution_config={"use_docker": False},
+            code_execution_config={
+                "last_n_messages": 1,
+                "work_dir": "agents_work_dir",
+                "use_docker": False,
+            },
             max_consecutive_auto_reply=self.max_consecutive_auto_reply,
         )
         

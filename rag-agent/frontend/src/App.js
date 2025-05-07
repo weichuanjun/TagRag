@@ -1,7 +1,14 @@
 import React from 'react';
 import { Routes, Route, Link, Navigate } from 'react-router-dom';
 import { Layout, Menu } from 'antd';
-import { MessageOutlined, CodeOutlined, FileOutlined, DatabaseOutlined, RobotOutlined } from '@ant-design/icons';
+import {
+    MessageOutlined,
+    CodeOutlined,
+    FileOutlined,
+    DatabaseOutlined,
+    RobotOutlined,
+    ShareAltOutlined  // 新增图标
+} from '@ant-design/icons';
 
 // 导入页面组件
 import ChatPage from './pages/ChatPage';
@@ -9,6 +16,7 @@ import FileUploadPage from './pages/FileUploadPage';
 import CodeAnalysisPage from './pages/CodeAnalysisPage';  // 保留代码分析页面
 import KnowledgeBasePage from './pages/KnowledgeBasePage';  // 新增知识库管理页面
 import AgentPromptPage from './pages/AgentPromptPage';  // 新增Agent提示词管理页面
+import GraphVisualizerPage from './pages/GraphVisualizerPage';  // 新增图可视化页面
 
 const { Header, Content, Footer, Sider } = Layout;
 
@@ -36,6 +44,9 @@ function App() {
                     <Menu.Item key="5" icon={<RobotOutlined />}>
                         <Link to="/agent-prompt">Agent提示词管理</Link>
                     </Menu.Item>
+                    <Menu.Item key="6" icon={<ShareAltOutlined />}>
+                        <Link to="/graph-view">知识图谱可视化</Link>
+                    </Menu.Item>
                 </Menu>
             </Sider>
             <Layout className="site-layout">
@@ -48,11 +59,12 @@ function App() {
                             <Route path="/code-analysis" element={<CodeAnalysisPage />} />
                             <Route path="/knowledge-bases" element={<KnowledgeBasePage />} />
                             <Route path="/agent-prompt" element={<AgentPromptPage />} />
+                            <Route path="/graph-view" element={<GraphVisualizerPage />} />
                             <Route path="/" element={<Navigate to="/chat" replace />} />
                         </Routes>
                     </div>
                 </Content>
-                <Footer style={{ textAlign: 'center' }}>RAG Agent ©2023</Footer>
+                <Footer style={{ textAlign: 'center' }}>RAG Agent ©2025 WEICHUANJUN</Footer>
             </Layout>
         </Layout>
     );

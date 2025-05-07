@@ -147,29 +147,82 @@ class VectorStore:
             collection_name = f"repo_{self.repository_id}" if self.repository_id else "default"
             logger.info(f"添加文档到集合: {collection_name}，文档数: {len(documents)}")
             
-            # 确保元数据中保留知识库ID
+            # 处理文档对象，确保都是Document类型
+            processed_documents = []
             for doc in documents:
-                if not doc.metadata:
+                # 检查是否为有效的Document对象
+                if isinstance(doc, str):
+                    # 转换字符串为Document对象
+                    from langchain.schema import Document as LangchainDocument
+                    doc = LangchainDocument(
+                        page_content=doc,
+                        metadata={
+                            "source": os.path.basename(source_file),
+                            "document_id": document_id,
+                            "repository_id": self.repository_id
+                        }
+                    )
+                
+                # 确保元数据存在
+                if not hasattr(doc, 'metadata') or doc.metadata is None:
                     doc.metadata = {}
+                    
+                # 确保元数据中保留知识库ID和仓库ID
                 doc.metadata["repository_id"] = self.repository_id
                 if document_id:
                     doc.metadata["document_id"] = document_id
-                # 知识库ID已经在document_processor中添加，这里不需要重复添加
+                
+                # 确保文档有page_content属性
+                if not hasattr(doc, 'page_content'):
+                    doc.page_content = str(doc)
+                    
+                # 应用元数据过滤 - 修正传递的参数，应该传递整个doc对象
+                try:
+                    from langchain_community.vectorstores.utils import filter_complex_metadata
+                    # 创建新的元数据字典，防止修改原始对象
+                    if isinstance(doc, tuple):
+                        # 如果是元组，可能是(document, score)格式
+                        logger.info("检测到元组格式的文档，尝试提取Document对象")
+                        if len(doc) > 0 and hasattr(doc[0], 'metadata'):
+                            # 使用元组中的Document对象
+                            filtered_metadata = filter_complex_metadata(doc[0])
+                            doc.metadata = filtered_metadata
+                        else:
+                            # 如果无法处理，使用空元数据
+                            doc.metadata = {}
+                    else:
+                        # 正常处理Document对象
+                        filtered_metadata = filter_complex_metadata(doc)
+                        # 确保过滤后的元数据是字典
+                        if not isinstance(filtered_metadata, dict):
+                            filtered_metadata = {}
+                        # 将过滤后的元数据分配给文档
+                        doc.metadata = filtered_metadata
+                except Exception as e:
+                    logger.error(f"过滤元数据时出错: {str(e)}，使用空元数据")
+                    # 如果过滤失败，使用空元数据
+                    doc.metadata = {}
+                
+                processed_documents.append(doc)
             
             # 使用已创建的langchain_chroma实例添加文档
-            self.langchain_chroma.add_documents(documents)
-            logger.info(f"已添加 {len(documents)} 个文档到 {collection_name}")
+            if processed_documents:
+                self.langchain_chroma.add_documents(processed_documents)
+                logger.info(f"已添加 {len(processed_documents)} 个文档到 {collection_name}")
+            else:
+                logger.warning("没有有效的文档可以添加")
+                return {"status": "warning", "message": "没有有效的文档可以添加"}
             
             # 更新元数据
             file_name = os.path.basename(source_file)
             kb_id = None
             # 从第一个文档中获取知识库ID（如果有）
-            if documents and documents[0].metadata and "knowledge_base_id" in documents[0].metadata:
-                kb_id = documents[0].metadata["knowledge_base_id"]
+            if processed_documents and processed_documents[0].metadata and "knowledge_base_id" in processed_documents[0].metadata:
+                kb_id = processed_documents[0].metadata["knowledge_base_id"]
                 
             self.document_metadata["documents"][file_name] = {
                 "path": source_file,
-                "chunks_count": len(documents),
+                "chunks_count": len(processed_documents),
                 "added_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "repository_id": self.repository_id,
                 "document_id": document_id,
@@ -180,11 +233,13 @@ class VectorStore:
             return {
                 "status": "success",
                 "document_id": document_id or file_name,
-                "chunks_count": len(documents)
+                "chunks_count": len(processed_documents)
             }
             
         except Exception as e:
             logger.error(f"添加文档时出错: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise e
     
     async def search(self, query: str, k: int = 5, knowledge_base_id: Optional[int] = None) -> List[Dict[str, Any]]:
