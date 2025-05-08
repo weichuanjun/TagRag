@@ -11,13 +11,13 @@ UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 VECTOR_DB_DIR = os.path.join(BASE_DIR, "data/vector_db")
 CODE_ANALYSIS_DIR = os.path.join(BASE_DIR, "data/code_analysis")
 
-# Ollama 配置
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+# # Ollama 配置 (已删除)
+# OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
 
 # 如果需要使用OpenAI，可以在环境变量中设置API密钥
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-USE_OPENAI = os.environ.get("USE_OPENAI", "false").lower() == "true"
+USE_OPENAI = os.environ.get("USE_OPENAI", "true").lower() == "true" # 默认为true，如果只用OpenAI
 
 # 向量嵌入模型配置
 EMBEDDING_MODEL = os.environ.get(
@@ -26,38 +26,27 @@ EMBEDDING_MODEL = os.environ.get(
 
 # AutoGen模型配置
 def get_autogen_config() -> Dict[str, Any]:
-    """获取AutoGen的配置，根据环境变量决定使用OpenAI还是Ollama"""
+    """获取AutoGen的配置，仅使用OpenAI"""
+    config_list = []
     if USE_OPENAI and OPENAI_API_KEY:
         # 使用OpenAI
-        config = {
-            "config_list": [
-                {
-                    "model": os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
-                    "api_key": OPENAI_API_KEY,
-                }
-            ],
-            "temperature": float(os.environ.get("TEMPERATURE", "0.7")),
+        openai_config = {
+            "model": os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
+            "api_key": OPENAI_API_KEY,
         }
-        
         # 添加API基础URL，如果指定了的话
         api_base = os.environ.get("OPENAI_API_BASE")
         if api_base:
-            config["config_list"][0]["api_base"] = api_base
-            
-        return config
-    else:
-        # 使用本地Ollama
-        # 尝试简化配置，减少潜在错误
-        os.environ["OLLAMA_HOST"] = OLLAMA_HOST  # 设置环境变量
-        return {
-            "use_ollama": True,
-            "config_list": [
-                {
-                    "model": OLLAMA_MODEL,
-                }
-            ],
-            "temperature": float(os.environ.get("TEMPERATURE", "0.7")),
-        }
+            openai_config["api_base"] = api_base
+        config_list.append(openai_config)
+    elif USE_OPENAI and not OPENAI_API_KEY:
+        print("警告: USE_OPENAI 设置为 true, 但是 OPENAI_API_KEY 未在环境变量中设置。AutoGen将无法使用LLM。")
+    # 如果 USE_OPENAI 为 false，则不配置LLM
+
+    return {
+        "config_list": config_list,
+        "temperature": float(os.environ.get("TEMPERATURE", "0.7")),
+    }
 
 # 智能体系统提示词配置
 AGENT_PROMPTS = {

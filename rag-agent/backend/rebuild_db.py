@@ -47,12 +47,16 @@ def rebuild_database():
         # 创建新数据库表
         create_tables()
         logger.info("已重新创建所有数据库表")
+        logger.info("注意: 已添加新的标签(Tag)模型和关联表，用于支持文档和知识的分类")
         
         # 创建默认知识库
         create_default_knowledge_base()
         
         # 创建默认Agent Prompt
         create_default_prompts()
+        
+        # 创建默认标签
+        create_default_tags()
         
         return True
     except Exception as e:
@@ -147,6 +151,68 @@ def create_default_prompts():
         logger.info("已创建默认Agent提示词")
     except Exception as e:
         logger.error(f"创建默认提示词时出错: {str(e)}")
+    finally:
+        # 关闭会话
+        db.close()
+
+def create_default_tags():
+    """创建系统默认标签"""
+    try:
+        from sqlalchemy.orm import Session
+        from models import Tag, SessionLocal
+        
+        # 创建会话
+        db = SessionLocal()
+        
+        # 定义一些有用的默认标签
+        default_tags = [
+            {
+                "name": "重要文档",
+                "description": "标记重要的核心文档",
+                "color": "#f5222d"  # 红色
+            },
+            {
+                "name": "参考资料",
+                "description": "用于标记参考性质的文档",
+                "color": "#faad14"  # 黄色
+            },
+            {
+                "name": "技术文档",
+                "description": "技术相关的说明文档",
+                "color": "#1890ff"  # 蓝色
+            },
+            {
+                "name": "业务规则",
+                "description": "包含业务规则或流程的文档",
+                "color": "#52c41a"  # 绿色
+            },
+            {
+                "name": "API文档",
+                "description": "API接口相关文档",
+                "color": "#722ed1"  # 紫色
+            }
+        ]
+        
+        # 检查并添加默认标签
+        created_count = 0
+        for tag_data in default_tags:
+            # 检查是否已存在同名标签
+            existing = db.query(Tag).filter(Tag.name == tag_data["name"]).first()
+            
+            if not existing:
+                # 创建新标签
+                tag = Tag(**tag_data)
+                db.add(tag)
+                created_count += 1
+        
+        # 提交事务
+        db.commit()
+        if created_count > 0:
+            logger.info(f"已创建 {created_count} 个系统默认标签")
+        else:
+            logger.info("未创建默认标签（可能已存在）")
+    except Exception as e:
+        logger.error(f"创建默认标签时出错: {str(e)}")
     finally:
         # 关闭会话
         db.close()

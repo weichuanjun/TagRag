@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Button, message, Card, Typography, Space, List, Spin, Select, InputNumber, Row, Col, Input } from 'antd';
-import { InboxOutlined, FileOutlined, FileExcelOutlined, FilePdfOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { Upload, Button, message, Card, Typography, Space, List, Spin, Select, InputNumber, Row, Col, Input, Modal, Tag } from 'antd';
+import { InboxOutlined, FileOutlined, FileExcelOutlined, FilePdfOutlined, DatabaseOutlined, RobotOutlined, TagOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
 const { Dragger } = Upload;
@@ -15,6 +15,12 @@ const FileUploadPage = () => {
     const [kbLoading, setKbLoading] = useState(false);
     const [chunkSize, setChunkSize] = useState(1000);
     const [localFilePath, setLocalFilePath] = useState('');
+    const [tags, setTags] = useState([]);
+    const [tagsLoading, setTagsLoading] = useState(false);
+    const [selectedDocumentId, setSelectedDocumentId] = useState(null);
+    const [tagModalVisible, setTagModalVisible] = useState(false);
+    const [selectedTags, setSelectedTags] = useState([]);
+    const [analyzeLoading, setAnalyzeLoading] = useState(false);
 
     // 获取知识库列表
     const fetchKnowledgeBases = async () => {
@@ -33,6 +39,19 @@ const FileUploadPage = () => {
         }
     };
 
+    // 加载标签列表
+    const fetchTags = async () => {
+        setTagsLoading(true);
+        try {
+            const response = await axios.get('/tags');
+            setTags(response.data.tags || []);
+        } catch (error) {
+            console.error('获取标签列表失败:', error);
+        } finally {
+            setTagsLoading(false);
+        }
+    };
+
     // 加载已上传的文件
     const loadUploadedFiles = async () => {
         try {
@@ -41,18 +60,38 @@ const FileUploadPage = () => {
                 const response = await axios.get(`/knowledge-bases/${selectedKnowledgeBase}/documents`);
                 const docs = response.data || [];
 
-                // 转换格式
-                const files = docs.map(doc => ({
-                    uid: doc.id,
-                    name: doc.name,
-                    status: 'done',
-                    url: doc.path,
-                    knowledge_base_id: selectedKnowledgeBase,
-                    chunks_count: doc.chunks_count,
-                    added_at: doc.added_at
+                // 获取每个文档的标签
+                const docsWithTags = await Promise.all(docs.map(async (doc) => {
+                    try {
+                        const tagsResponse = await axios.get(`/tags/document/${doc.id}`);
+                        return {
+                            ...doc,
+                            uid: doc.id,
+                            name: doc.name,
+                            status: 'done',
+                            url: doc.path,
+                            knowledge_base_id: selectedKnowledgeBase,
+                            chunks_count: doc.chunks_count,
+                            added_at: doc.added_at,
+                            tags: tagsResponse.data.tags || []
+                        };
+                    } catch (error) {
+                        console.error(`获取文档 ${doc.id} 的标签失败:`, error);
+                        return {
+                            ...doc,
+                            uid: doc.id,
+                            name: doc.name,
+                            status: 'done',
+                            url: doc.path,
+                            knowledge_base_id: selectedKnowledgeBase,
+                            chunks_count: doc.chunks_count,
+                            added_at: doc.added_at,
+                            tags: []
+                        };
+                    }
                 }));
 
-                setUploadedFiles(files);
+                setUploadedFiles(docsWithTags);
             } else {
                 // 获取所有文档
                 const response = await axios.get('/documents');
@@ -65,7 +104,8 @@ const FileUploadPage = () => {
                     status: 'done',
                     url: doc.path,
                     chunks_count: doc.chunks_count,
-                    added_at: doc.added_at
+                    added_at: doc.added_at,
+                    tags: []
                 }));
 
                 setUploadedFiles(files);
@@ -76,9 +116,10 @@ const FileUploadPage = () => {
         }
     };
 
-    // 组件加载时获取知识库列表
+    // 组件加载时获取知识库列表和标签列表
     useEffect(() => {
         fetchKnowledgeBases();
+        fetchTags();
         loadUploadedFiles();
     }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -220,6 +261,157 @@ const FileUploadPage = () => {
         }
     };
 
+    // 打开标签选择对话框
+    const openTagModal = (documentId) => {
+        setSelectedDocumentId(documentId);
+
+        // 找到当前文档的标签
+        const document = uploadedFiles.find(file => file.uid === documentId);
+        if (document && document.tags) {
+            setSelectedTags(document.tags.map(tag => tag.id));
+        } else {
+            setSelectedTags([]);
+        }
+
+        setTagModalVisible(true);
+    };
+
+    // 处理标签选择变更
+    const handleTagChange = (tagIds) => {
+        setSelectedTags(tagIds);
+    };
+
+    // 保存文档标签
+    const saveDocumentTags = async () => {
+        try {
+            await axios.post(`/tags/document/${selectedDocumentId}`, selectedTags);
+
+            message.success('标签保存成功');
+            setTagModalVisible(false);
+
+            // 重新加载文档列表以获取更新的标签
+            loadUploadedFiles();
+        } catch (error) {
+            console.error('保存标签失败:', error);
+            message.error('保存标签失败');
+        }
+    };
+
+    // 使用AI分析文档内容，提取标签
+    const analyzeDocument = async (documentId) => {
+        setAnalyzeLoading(true);
+        setSelectedDocumentId(documentId);
+        try {
+            const response = await axios.post(`/tags/analyze-document/${documentId}`);
+
+            if (response.data.success) {
+                message.success('AI分析成功');
+                // 重新加载文档列表以获取更新的标签
+                loadUploadedFiles();
+                // 同时更新标签列表，因为可能创建了新标签
+                fetchTags();
+            } else {
+                message.error('AI分析失败');
+            }
+        } catch (error) {
+            console.error('AI分析文档失败:', error);
+            message.error('AI分析文档失败');
+        } finally {
+            setAnalyzeLoading(false);
+        }
+    };
+
+    // 备用的AI分析方法，使用测试路由
+    const analyzeDocumentAlt = async (documentId) => {
+        setAnalyzeLoading(true);
+        setSelectedDocumentId(documentId);
+        try {
+            console.log(`尝试使用备用路由分析文档ID: ${documentId}`);
+            const response = await axios.post(`/analyze-doc-test/${documentId}`);
+
+            if (response.data.success) {
+                message.success('测试路由访问成功');
+                console.log('测试路由结果:', response.data);
+
+                // 尝试通过原始路由进行完整分析
+                try {
+                    const fullResponse = await axios.post(`/tags/analyze-document/${documentId}`);
+                    if (fullResponse.data.success) {
+                        message.success('AI分析成功');
+                        // 重新加载文档列表以获取更新的标签
+                        loadUploadedFiles();
+                        // 同时更新标签列表，因为可能创建了新标签
+                        fetchTags();
+                    }
+                } catch (fullError) {
+                    console.error('原始分析路由仍然失败:', fullError);
+                    message.error('原始分析路由仍然失败, 但测试路由可以访问');
+                }
+            } else {
+                message.error('测试路由分析失败');
+            }
+        } catch (error) {
+            console.error('测试路由分析失败:', error);
+            message.error(`测试路由分析失败: ${error.message}`);
+        } finally {
+            setAnalyzeLoading(false);
+        }
+    };
+
+    // 直接分析文档的方法，完全绕过路由器实现
+    const analyzeDocumentDirect = async (documentId) => {
+        setAnalyzeLoading(true);
+        setSelectedDocumentId(documentId);
+        try {
+            console.log(`使用直接分析路由处理文档ID: ${documentId}`);
+            const response = await axios.post(`/direct/analyze-document/${documentId}`);
+
+            if (response.data.success) {
+                message.success('文档直接分析成功');
+                console.log('直接分析结果:', response.data);
+
+                // 重新加载文档列表以获取更新的标签
+                loadUploadedFiles();
+                // 同时更新标签列表，因为可能创建了新标签
+                fetchTags();
+            } else {
+                message.error('直接分析失败');
+            }
+        } catch (error) {
+            console.error('直接分析文档失败:', error);
+            message.error(`直接分析文档失败: ${error.message}`);
+        } finally {
+            setAnalyzeLoading(false);
+        }
+    };
+
+    // 尝试所有分析方法
+    const analyzeDocumentAll = async (documentId) => {
+        // 首先尝试直接分析
+        try {
+            await analyzeDocumentDirect(documentId);
+            return;
+        } catch (error) {
+            console.error('直接分析失败，尝试下一种方法...');
+        }
+
+        // 然后尝试测试路由
+        try {
+            await analyzeDocumentAlt(documentId);
+            return;
+        } catch (error) {
+            console.error('测试路由分析失败，尝试下一种方法...');
+        }
+
+        // 最后尝试原始方法
+        try {
+            await analyzeDocument(documentId);
+        } catch (error) {
+            console.error('所有分析方法都失败了');
+            message.error('所有分析方法都失败了');
+        }
+    };
+
     return (
         <div>
             <Title level={4}>上传文档</Title>
@@ -319,21 +511,86 @@ const FileUploadPage = () => {
                         renderItem={item => (
                             <List.Item
                                 actions={[
-                                    <Button type="link" onClick={() => message.info('此功能尚未实现')}>
-                                        查看
+                                    <Button type="link" onClick={() => openTagModal(item.uid)} icon={<TagOutlined />}>
+                                        管理标签
+                                    </Button>,
+                                    <Button
+                                        type="link"
+                                        onClick={() => analyzeDocumentAll(item.uid)}
+                                        icon={<RobotOutlined />}
+                                        loading={analyzeLoading && selectedDocumentId === item.uid}
+                                    >
+                                        AI分析(所有方法)
                                     </Button>
                                 ]}
                             >
                                 <List.Item.Meta
                                     avatar={getFileIcon(item.name)}
                                     title={item.name}
-                                    description={`块数量: ${item.chunks_count || '未知'} | 上传于: ${item.added_at || new Date().toLocaleString()}`}
+                                    description={
+                                        <>
+                                            <div>块数量: {item.chunks_count || '未知'} | 上传于: {item.added_at || new Date().toLocaleString()}</div>
+                                            <div style={{ marginTop: 8 }}>
+                                                {(item.tags && item.tags.length > 0) ? (
+                                                    <Space size={[0, 4]} wrap>
+                                                        {item.tags.map(tag => (
+                                                            <Tag color={tag.color} key={tag.id}>{tag.name}</Tag>
+                                                        ))}
+                                                    </Space>
+                                                ) : (
+                                                    <Text type="secondary">无标签</Text>
+                                                )}
+                                            </div>
+                                        </>
+                                    }
                                 />
                             </List.Item>
                         )}
                     />
                 )}
             </Card>
+
+            <Modal
+                title="管理文档标签"
+                open={tagModalVisible}
+                onCancel={() => setTagModalVisible(false)}
+                onOk={saveDocumentTags}
+                okText="保存"
+                cancelText="取消"
+            >
+                <div style={{ marginBottom: 16 }}>
+                    <Text type="secondary">为文档选择适合的标签，或使用AI自动分析生成标签</Text>
+                </div>
+                <Select
+                    mode="multiple"
+                    style={{ width: '100%' }}
+                    placeholder="请选择标签"
+                    value={selectedTags}
+                    onChange={handleTagChange}
+                    loading={tagsLoading}
+                    optionLabelProp="label"
+                >
+                    {tags.map(tag => (
+                        <Option key={tag.id} value={tag.id} label={tag.name}>
+                            <Tag color={tag.color}>{tag.name}</Tag>
+                            {tag.description && <span style={{ marginLeft: 8, fontSize: '12px', color: '#999' }}>{tag.description}</span>}
+                        </Option>
+                    ))}
+                </Select>
+                <div style={{ marginTop: 16, textAlign: 'right' }}>
+                    <Button
+                        type="primary"
+                        icon={<RobotOutlined />}
+                        onClick={() => {
+                            setTagModalVisible(false);
+                            analyzeDocumentAll(selectedDocumentId);
+                        }}
+                        loading={analyzeLoading}
+                    >
+                        使用AI分析生成标签(所有方法)
+                    </Button>
+                </div>
+            </Modal>
         </div>
     );
 };

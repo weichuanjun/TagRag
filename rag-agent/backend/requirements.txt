@@ -8,7 +8,7 @@ python-jose>=3.3.0
 python-dotenv>=1.0.0
 
 # AutoGen相关
-pyautogen==0.1.14  # 固定版本，避免兼容性问题
+pyautogen>=0.2.0 # 固定版本，避免兼容性问题
 
 # LLM和向量数据库
 langchain>=0.0.335

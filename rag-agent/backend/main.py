@@ -29,6 +29,11 @@ from knowledge_base_routes import router as knowledge_base_router
 from agent_prompt_routes import router as agent_prompt_router
 # 导入图可视化模块
 from graph_visualizer import router as graph_router
+# 导入标签管理模块
+from tag_routes import router as tag_router
+
+# 导入必要的模块以处理文档分析
+from tag_routes import llm_client
 
 # 配置日志
 logging.basicConfig(
@@ -71,6 +76,8 @@ app.include_router(knowledge_base_router)
 app.include_router(agent_prompt_router)
 # 添加图可视化路由
 app.include_router(graph_router)
+# 添加标签管理路由
+app.include_router(tag_router)
 
 # 确保数据库和表已创建
 create_tables()
@@ -107,7 +114,16 @@ def get_vector_store(repository_id: int = None) -> VectorStore:
 # API端点
 @app.get("/")
 async def read_root():
-    return {"message": "欢迎使用RAG Agent API"}
+    # 添加调试信息，打印所有路由
+    routes_info = []
+    for route in app.routes:
+        route_info = {"path": route.path, "methods": list(route.methods) if hasattr(route, "methods") else None}
+        routes_info.append(route_info)
+    
+    return {
+        "message": "欢迎使用RAG Agent API",
+        "routes": routes_info
+    }
 
 @app.post("/upload-document")
 async def upload_document(request: DocumentUploadRequest, db = Depends(get_db)):
@@ -330,6 +346,180 @@ async def log_requests(request: Request, call_next):
     logger.info(f"请求: {request.method} {request.url}")
     response = await call_next(request)
     return response
+
+@app.post("/analyze-doc-test/{document_id}")
+async def analyze_doc_test(document_id: int, db = Depends(get_db)):
+    """用于测试的文档分析路由"""
+    logger.info(f"测试路由：分析文档ID {document_id}")
+    try:
+        # 查找文档
+        from models import Document, DocumentChunk
+        document = db.query(Document).filter(Document.id == document_id).first()
+        if not document:
+            logger.error(f"文档ID {document_id} 不存在")
+            raise HTTPException(status_code=404, detail=f"文档ID {document_id} 不存在")
+            
+        # 获取文档的所有文本块
+        chunks = db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).all()
+        if not chunks:
+            logger.error(f"文档没有可分析的内容块")
+            raise HTTPException(status_code=404, detail=f"文档没有可分析的内容块")
+        
+        # 简化处理，返回文档信息
+        return {
+            "success": True,
+            "message": "测试路由可以访问",
+            "document_id": document_id,
+            "chunks_count": len(chunks)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"测试路由错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"测试路由错误: {str(e)}")
+
+@app.get("/debug/routes")
+async def get_routes():
+    """返回所有已注册的路由详情，帮助调试"""
+    routes_info = []
+    for route in app.routes:
+        route_info = {
+            "path": route.path,
+            "name": route.name if hasattr(route, "name") else None,
+            "methods": list(route.methods) if hasattr(route, "methods") else None,
+            "endpoint": str(route.endpoint) if hasattr(route, "endpoint") else None,
+            "endpoint_name": route.endpoint.__name__ if hasattr(route, "endpoint") and hasattr(route.endpoint, "__name__") else None
+        }
+        routes_info.append(route_info)
+    
+    # 特别关注与文档分析相关的路由
+    analyze_routes = [r for r in routes_info if "analyze" in r.get("path", "")]
+    
+    return {
+        "total_routes": len(routes_info),
+        "analyze_routes": analyze_routes,
+        "all_routes": routes_info
+    }
+
+@app.post("/direct/analyze-document/{document_id}")
+async def direct_analyze_document(document_id: int, db = Depends(get_db)):
+    """直接在main.py中实现的文档分析功能"""
+    logger.info(f"直接分析路由：处理文档ID {document_id}")
+    
+    try:
+        from models import Document, DocumentChunk, Tag
+        import json
+        import re
+        
+        # 查找文档
+        document = db.query(Document).filter(Document.id == document_id).first()
+        if not document:
+            logger.error(f"文档ID {document_id} 不存在")
+            raise HTTPException(status_code=404, detail=f"文档ID {document_id} 不存在")
+        
+        # 获取文档的所有文本块
+        chunks = db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).all()
+        if not chunks:
+            logger.error(f"文档没有可分析的内容块")
+            raise HTTPException(status_code=404, detail=f"文档没有可分析的内容块")
+        
+        # 汇总内容（限制长度，避免超出API限制）
+        content_samples = []
+        for chunk in chunks[:10]:  # 最多使用前10个块
+            try:
+                content = chunk.content[:500]  # 每块最多取500个字符
+                content_samples.append(content)
+            except Exception as e:
+                logger.warning(f"处理文档块 {chunk.id} 时出错: {str(e)}")
+        
+        if not content_samples:
+            logger.error("无法提取有效的文档内容样本")
+            raise HTTPException(status_code=400, detail="无法提取有效的文档内容样本")
+        
+        # 构建分析提示
+        analysis_prompt = f"""
+        请对以下文档内容进行简短分析，提取最重要的标签。
+        
+        文档内容样本:
+        {' '.join(content_samples[:2])}
+        
+        请以JSON格式返回以下信息:
+        1. 摘要：简短描述文档内容
+        2. 标签列表：3-5个关键标签，包含名称和描述
+        
+        示例格式：
+        ```json
+        {{
+          "summary": "这是关于X的文档...",
+          "tags": [
+            {{ "name": "标签1", "description": "描述1" }},
+            {{ "name": "标签2", "description": "描述2" }}
+          ]
+        }}
+        ```
+        """
+        
+        # 调用LLM进行分析
+        analysis_result = await llm_client.generate(analysis_prompt)
+        logger.info(f"LLM返回结果长度: {len(analysis_result)}")
+        
+        # 解析JSON结果
+        try:
+            # 查找JSON部分
+            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', analysis_result)
+            if json_match:
+                analysis_json = json.loads(json_match.group(1))
+                logger.info("成功从markdown代码块解析JSON")
+            else:
+                # 尝试直接解析整个文本作为JSON
+                analysis_json = json.loads(analysis_result)
+                logger.info("成功直接解析JSON")
+        except Exception as e:
+            logger.error(f"解析LLM返回的JSON失败: {str(e)}，原始返回: {analysis_result}")
+            raise HTTPException(status_code=500, detail=f"解析AI分析结果失败: {str(e)}")
+        
+        # 提取分析结果
+        summary = analysis_json.get("summary", "")
+        tags_data = analysis_json.get("tags", [])
+        
+        # 处理标签
+        created_tags = []
+        for tag_data in tags_data:
+            tag_name = tag_data.get("name")
+            tag_desc = tag_data.get("description", "")
+            
+            # 检查标签是否已存在
+            tag = db.query(Tag).filter(Tag.name == tag_name).first()
+            if not tag:
+                # 创建新标签
+                tag = Tag(
+                    name=tag_name,
+                    description=tag_desc,
+                    color="#1890ff"  # 默认颜色
+                )
+                db.add(tag)
+                db.commit()
+                db.refresh(tag)
+                logger.info(f"创建了新标签: {tag_name}")
+            
+            created_tags.append(tag)
+        
+        # 将标签关联到文档
+        document.tags = created_tags
+        db.commit()
+        logger.info(f"成功关联 {len(created_tags)} 个标签到文档")
+        
+        # 返回结果
+        return {
+            "success": True,
+            "summary": summary,
+            "tags": [{"id": tag.id, "name": tag.name, "description": tag.description} for tag in created_tags]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"直接分析文档失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"直接分析文档失败: {str(e)}")
 
 # 主函数
 if __name__ == "__main__":
