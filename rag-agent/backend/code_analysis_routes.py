@@ -21,35 +21,72 @@ class LLMClient:
     
     def __init__(self, config=None):
         self.config = config or get_autogen_config()
+        self._results_cache = {}  # 简单的结果缓存
     
     async def generate(self, prompt: str) -> str:
         """生成文本"""
-        # 这里简化实现，可以根据实际情况调整
-        import openai
-        
-        # 配置API密钥
-        if "config_list" in self.config and len(self.config["config_list"]) > 0:
-            first_config = self.config["config_list"][0]
-            openai.api_key = first_config.get("api_key")
-            openai.api_base = first_config.get("api_base", "https://api.openai.com/v1")
+        # 检查缓存
+        if prompt in self._results_cache:
+            logger.info("使用缓存的生成结果")
+            return self._results_cache[prompt]
             
-            # 使用ChatCompletion API
-            try:
-                response = await openai.ChatCompletion.acreate(
-                    model=first_config.get("model", "gpt-3.5-turbo"),
-                    messages=[
-                        {"role": "system", "content": "你是一个代码分析助手，负责分析和总结代码功能。"},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=self.config.get("temperature", 0.7),
-                    max_tokens=500
-                )
-                return response.choices[0].message.content
-            except Exception as e:
-                logger.error(f"调用OpenAI API失败: {str(e)}")
-                return f"摘要生成失败: {str(e)}"
-        else:
-            return "未配置API密钥，无法生成摘要"
+        # 这里简化实现，可以根据实际情况调整
+        try:
+            # 配置API密钥
+            if "config_list" in self.config and len(self.config["config_list"]) > 0:
+                first_config = self.config["config_list"][0]
+                api_key = first_config.get("api_key")
+                api_base = first_config.get("api_base", "https://api.openai.com/v1")
+                model = first_config.get("model", "gpt-3.5-turbo")
+                temperature = self.config.get("temperature", 0.7)
+                
+                # 尝试使用新版API
+                try:
+                    # 新版OpenAI API (>=1.0.0)
+                    from openai import OpenAI
+                    logger.info("使用OpenAI新版API")
+                    
+                    client = OpenAI(api_key=api_key, base_url=api_base)
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": "你是一个代码分析助手，负责分析和总结代码功能。"},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=temperature,
+                        max_tokens=500
+                    )
+                    result = response.choices[0].message.content
+                    
+                except (ImportError, AttributeError):
+                    # 尝试旧版API
+                    logger.info("尝试使用OpenAI旧版API")
+                    import openai
+                    
+                    # 配置旧版API
+                    openai.api_key = api_key
+                    openai.api_base = api_base
+                    
+                    # 使用旧版ChatCompletion API
+                    response = await openai.ChatCompletion.acreate(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": "你是一个代码分析助手，负责分析和总结代码功能。"},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=temperature,
+                        max_tokens=500
+                    )
+                    result = response.choices[0].message.content
+                
+                # 缓存结果
+                self._results_cache[prompt] = result
+                return result
+            else:
+                return "未配置API密钥，无法生成摘要"
+        except Exception as e:
+            logger.error(f"调用LLM API失败: {str(e)}")
+            return f"摘要生成失败: {str(e)}"
 
 # API端点
 @router.post("/repositories")

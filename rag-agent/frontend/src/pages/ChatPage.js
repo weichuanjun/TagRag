@@ -9,8 +9,25 @@ const { Title, Text } = Typography;
 const { Panel } = Collapse;
 const { Option } = Select;
 
+// 聊天缓存的键名
+const CHAT_CACHE_KEY = 'rag_agent_chat_cache';
+
 const ChatPage = () => {
-    const [messages, setMessages] = useState([]);
+    // 从localStorage加载缓存的聊天记录
+    const loadCachedMessages = () => {
+        try {
+            const cachedData = localStorage.getItem(CHAT_CACHE_KEY);
+            if (cachedData) {
+                const parsedData = JSON.parse(cachedData);
+                return parsedData.messages || [];
+            }
+        } catch (error) {
+            console.error('加载聊天缓存失败:', error);
+        }
+        return [];
+    };
+
+    const [messages, setMessages] = useState(loadCachedMessages);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [useCodeAnalysis, setUseCodeAnalysis] = useState(false);
@@ -20,6 +37,19 @@ const ChatPage = () => {
     const [kbLoading, setKbLoading] = useState(false);
     const [agentPrompts, setAgentPrompts] = useState([]);
     const messagesEndRef = useRef(null);
+
+    // 缓存聊天记录到localStorage
+    useEffect(() => {
+        try {
+            const cacheData = {
+                messages,
+                lastUpdated: new Date().toISOString()
+            };
+            localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify(cacheData));
+        } catch (error) {
+            console.error('缓存聊天记录失败:', error);
+        }
+    }, [messages]);
 
     // 获取知识库列表
     const fetchKnowledgeBases = async () => {
@@ -49,6 +79,14 @@ const ChatPage = () => {
             fetchAgentPromptsForKnowledgeBase(selectedKnowledgeBase);
         }
     }, [selectedKnowledgeBase]);
+
+    // 清除聊天记录
+    const clearChatHistory = () => {
+        setMessages([]);
+        setThinkingProcess([]);
+        localStorage.removeItem(CHAT_CACHE_KEY);
+        message.success('聊天记录已清除');
+    };
 
     // 获取知识库的关联提示词
     const fetchAgentPromptsForKnowledgeBase = async (knowledgeBaseId) => {
@@ -219,6 +257,14 @@ const ChatPage = () => {
                     <Tooltip title="启用后，系统将分析知识库中的代码，您可以直接询问代码结构和功能">
                         <InfoCircleOutlined style={{ color: '#1890ff' }} />
                     </Tooltip>
+                    <Button
+                        danger
+                        type="text"
+                        onClick={clearChatHistory}
+                        disabled={messages.length === 0}
+                    >
+                        清除记录
+                    </Button>
                 </Space>
             </div>
 

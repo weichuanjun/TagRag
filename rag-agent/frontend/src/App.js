@@ -1,7 +1,21 @@
 import React from 'react';
 import { Routes, Route, Link, Navigate } from 'react-router-dom';
-import { Layout, Menu } from 'antd';
-import { MessageOutlined, CodeOutlined, FileOutlined, DatabaseOutlined, RobotOutlined } from '@ant-design/icons';
+import { Layout, Menu, ConfigProvider, theme } from 'antd';
+import {
+    MessageOutlined,
+    CodeOutlined,
+    FileOutlined,
+    DatabaseOutlined,
+    RobotOutlined,
+    ShareAltOutlined,
+    TagsOutlined,  // 添加标签图标
+    UploadOutlined,
+    WechatOutlined,
+    ApartmentOutlined,
+    SettingOutlined,
+    ExperimentOutlined
+} from '@ant-design/icons';
+import axios from 'axios'; // 导入axios
 
 // 导入页面组件
 import ChatPage from './pages/ChatPage';
@@ -9,6 +23,15 @@ import FileUploadPage from './pages/FileUploadPage';
 import CodeAnalysisPage from './pages/CodeAnalysisPage';  // 保留代码分析页面
 import KnowledgeBasePage from './pages/KnowledgeBasePage';  // 新增知识库管理页面
 import AgentPromptPage from './pages/AgentPromptPage';  // 新增Agent提示词管理页面
+import GraphVisualizerPage from './pages/GraphVisualizerPage';  // 新增图可视化页面
+import TagManagementPage from './pages/TagManagementPage';  // 新增标签管理页面
+
+// 配置 Axios baseURL
+// 使用REACT_APP_API_BASE_URL环境变量，如果未设置，则默认为 docker-compose 中的后端服务地址
+// 对于浏览器访问场景，默认应为 localhost
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
+axios.defaults.baseURL = API_BASE_URL;
+console.log(`API Base URL set to: ${API_BASE_URL}`); // 用于调试
 
 const { Header, Content, Footer, Sider } = Layout;
 
@@ -36,6 +59,12 @@ function App() {
                     <Menu.Item key="5" icon={<RobotOutlined />}>
                         <Link to="/agent-prompt">Agent提示词管理</Link>
                     </Menu.Item>
+                    <Menu.Item key="6" icon={<ShareAltOutlined />}>
+                        <Link to="/graph-view">知识图谱可视化</Link>
+                    </Menu.Item>
+                    <Menu.Item key="7" icon={<TagsOutlined />}>
+                        <Link to="/tags">标签管理</Link>
+                    </Menu.Item>
                 </Menu>
             </Sider>
             <Layout className="site-layout">
@@ -48,11 +77,13 @@ function App() {
                             <Route path="/code-analysis" element={<CodeAnalysisPage />} />
                             <Route path="/knowledge-bases" element={<KnowledgeBasePage />} />
                             <Route path="/agent-prompt" element={<AgentPromptPage />} />
+                            <Route path="/graph-view" element={<GraphVisualizerPage />} />
+                            <Route path="/tags" element={<TagManagementPage />} />
                             <Route path="/" element={<Navigate to="/chat" replace />} />
                         </Routes>
                     </div>
                 </Content>
-                <Footer style={{ textAlign: 'center' }}>RAG Agent ©2023</Footer>
+                <Footer style={{ textAlign: 'center' }}>RAG Agent ©2025 WEICHUANJUN</Footer>
             </Layout>
         </Layout>
     );
