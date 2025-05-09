@@ -125,10 +125,62 @@ class DocumentProcessor:
             )
     
     async def _analyze_and_associate_tags_via_llm(self, document_content_sample: str, db_document: DBDocument, db: Session):
-        """Analyzes document content sample using LLM to suggest and associate tags."""
-        logger.info(f"Starting LLM tag analysis for doc_id: {db_document.id} ('{db_document.source}')")
+        """使用混合方法分析文档内容，自动生成结构化标签和分段摘要
+        流程：调用/tags/analyze-document/{document_id}接口，该接口集成了TF-IDF粗提关键词 -> KeyBERT精提语义关键词 -> 构造GPT Prompt -> LLM生成结构化标签
+        """
+        logger.info(f"Starting advanced tag analysis for doc_id: {db_document.id} ('{db_document.source}')")
+        
+        if not document_content_sample.strip():
+            logger.info(f"Document content sample is empty for doc_id: {db_document.id}. Skipping tag analysis.")
+            return
+            
+        try:
+            # 直接调用tag_routes.py中的analyze_document_for_tags接口
+            # 注意：这里不使用HTTP请求，而是直接导入函数并调用，避免额外的HTTP开销
+            from tag_routes import analyze_document_for_tags
+            
+            # 调用高级标签分析方法
+            logger.info(f"Calling advanced tag analysis for doc_id: {db_document.id}")
+            analysis_result = await analyze_document_for_tags(document_id=db_document.id, db=db)
+            
+            # 处理结果
+            if analysis_result.get("success") and "tags" in analysis_result:
+                # 高级标签分析成功完成，标签已经在接口内自动关联到文档
+                # 这里只需记录相关信息
+                tags_count = len(analysis_result.get("tags", []))
+                logger.info(f"Advanced tag analysis completed successfully for doc_id: {db_document.id}. Generated {tags_count} tags.")
+                
+                # 记录摘要信息（如有需要）
+                summary = analysis_result.get("summary", "")
+                if summary:
+                    # 如果有额外的处理摘要的需求，可以在这里添加
+                    logger.info(f"Generated document summary for doc_id: {db_document.id} (length: {len(summary)})")
+                
+                # 记录关键词信息（如有需要）
+                keywords = analysis_result.get("keywords", [])
+                if keywords:
+                    logger.info(f"Extracted keywords for doc_id: {db_document.id}: {keywords[:10]}...")
+                
+                # 标签已经在analyze_document_for_tags函数内自动关联到文档，无需在此处再关联
+                return
+            else:
+                # 分析失败或没有返回预期结果，记录错误
+                error_msg = analysis_result.get("detail", "Unknown error in tag analysis")
+                logger.warning(f"Advanced tag analysis did not return success for doc_id: {db_document.id}. Error: {error_msg}")
+                
+                # 尝试使用旧方法作为备选
+                await self._legacy_analyze_and_associate_tags_via_llm(document_content_sample, db_document, db)
+        except Exception as e:
+            logger.error(f"Error during advanced tag analysis for doc_id: {db_document.id}: {e}", exc_info=True)
+            # 发生错误时，尝试使用旧方法作为备选
+            logger.info(f"Falling back to legacy tag analysis for doc_id: {db_document.id}")
+            await self._legacy_analyze_and_associate_tags_via_llm(document_content_sample, db_document, db)
+
+    async def _legacy_analyze_and_associate_tags_via_llm(self, document_content_sample: str, db_document: DBDocument, db: Session):
+        """旧版标签生成方法（作为备选）"""
+        logger.info(f"Using legacy tag analysis for doc_id: {db_document.id} ('{db_document.source}')")
         # Add log to check the received sample
-        logger.debug(f"_analyze_and_associate_tags_via_llm received content sample (first 500 chars): {document_content_sample[:500]}")
+        logger.debug(f"_legacy_analyze_and_associate_tags_via_llm received content sample (first 500 chars): {document_content_sample[:500]}")
         if not document_content_sample.strip():
             logger.info(f"Document content sample is empty for doc_id: {db_document.id}. Skipping LLM tag analysis.")
             return
@@ -231,7 +283,7 @@ class DocumentProcessor:
                 db.rollback()
         else:
             logger.info(f"No new valid tags to associate with document_id {db_document.id} from LLM suggestions.")
-        logger.info(f"Finished LLM tag analysis for doc_id: {db_document.id} ('{db_document.source}')")
+        logger.info(f"Finished legacy tag analysis for doc_id: {db_document.id} ('{db_document.source}')")
 
     async def process_document(self, file_path: str, repository_id: int, db: Session, chunk_size: int = 1000, knowledge_base_id: Optional[int] = None, original_filename: Optional[str] = None):
         self.text_splitter.chunk_size = chunk_size
@@ -294,23 +346,7 @@ class DocumentProcessor:
             
             logger.info(f"Successfully loaded and split '{db_document.source}' into {len(raw_langchain_chunks)} raw chunks.")
 
-            # 2. Auto-tagging via LLM (updates db_document.tags in SQL)
-            if content_sample_for_llm and content_sample_for_llm.strip(): # Check again before calling
-                try:
-                    logger.info(f"Attempting LLM auto-tagging for doc_id {document_id} ('{db_document.source}')")
-                    await self._analyze_and_associate_tags_via_llm(content_sample_for_llm, db_document, db)
-                    db.refresh(db_document) # Ensure db_document.tags is up-to-date from the session
-                    associated_tag_names = [tag.name for tag in db_document.tags] if db_document.tags else []
-                    logger.info(f"LLM auto-tagging completed for doc_id {document_id}. Associated tags: {associated_tag_names}")
-                except Exception as e_autotag:
-                    logger.error(f"Error during LLM auto-tagging for doc_id {document_id}: {e_autotag}", exc_info=True)
-                    # Non-fatal, proceed without LLM tags if analysis fails
-            else:
-                logger.info(f"Skipping LLM auto-tagging for doc_id {document_id} due to empty or error content sample (checked in process_document).") # Updated log
-
-            document_level_tag_ids = [tag.id for tag in db_document.tags] if db_document.tags else []
-            logger.info(f"PROCESS_DOCUMENT DBG: Document-level tag IDs for doc_id {document_id} after auto-tagging (or if skipped): {document_level_tag_ids}")
-
+            # 修改顺序：先处理和保存文档块，再进行标签分析
             # 3. Process Chunks: Save to DB and prepare for Vector Store
             db_chunks_to_save: List[DocumentChunk] = []
             langchain_docs_for_vector_store: List[Document] = []
@@ -371,37 +407,28 @@ class DocumentProcessor:
                     page=chunk_doc.metadata.get("page_number")
                 )
                 
-                # 新增的行：将文档标签关联到块对象
-                if db_document and db_document.tags:
-                    db_chunk.tags = list(db_document.tags) # 使用 list() 创建副本以防意外修改
-                
                 db_chunks_to_save.append(db_chunk)
 
-                # Prepare Langchain Document for Vector Store (with its own filtered metadata copy)
-                # This is where metadata for ChromaDB is actually constructed.
-                metadata_for_vector_store_dict = chunk_doc.metadata.copy() # Start with existing base metadata
+                # Prepare Langchain Document for Vector Store
+                metadata_for_vector_store_dict = chunk_doc.metadata.copy()
                 
                 # Remove the list-based 'tag_ids' if it was accidentally set on chunk_doc.metadata earlier
                 if "tag_ids" in metadata_for_vector_store_dict:
                     del metadata_for_vector_store_dict["tag_ids"]
 
-                # Add flattened tags: e.g., tag_10: True, tag_9: True
-                if document_level_tag_ids:
-                    for tag_id in document_level_tag_ids:
-                        metadata_for_vector_store_dict[f"tag_{tag_id}"] = True
-                
-                # Now, final_meta_for_chroma will be built from metadata_for_vector_store_dict
-                # ensuring only scalar values are kept by the existing loop.
+                # 暂时先不添加扁平化标签，因为标签还没有生成
+                # 将在标签分析后更新metadata
+
+                # 只保留标量值
                 final_meta_for_chroma = {}
                 for k, v in metadata_for_vector_store_dict.items():
                     if isinstance(v, (str, int, float, bool)):
                         final_meta_for_chroma[k] = v
-                    # Lists (other than the original tag_ids which is now removed/flattened) are excluded by this logic
 
-                logger.info(f"PROCESS_DOCUMENT DBG: Final FLATTENED metadata for Chroma for chunk {i} of doc {document_id}: {json.dumps(final_meta_for_chroma)}")
                 langchain_docs_for_vector_store.append(Document(page_content=chunk_doc.page_content, metadata=final_meta_for_chroma))
                 processed_chunks_count += 1
 
+            # 先保存文档块到数据库
             if db_chunks_to_save:
                 db.add_all(db_chunks_to_save)
                 db.commit()
@@ -409,7 +436,78 @@ class DocumentProcessor:
             else:
                 logger.warning(f"No valid DocumentChunk records to save to DB for doc_id {document_id}.")
 
-            # 4. Add to Vector Store
+            # 2. 现在再进行Auto-tagging (更新顺序)
+            if content_sample_for_llm and content_sample_for_llm.strip(): # Check again before calling
+                try:
+                    logger.info(f"Attempting LLM auto-tagging for doc_id {document_id} ('{db_document.source}')")
+                    await self._analyze_and_associate_tags_via_llm(content_sample_for_llm, db_document, db)
+                    db.refresh(db_document) # Ensure db_document.tags is up-to-date from the session
+                    associated_tag_names = [tag.name for tag in db_document.tags] if db_document.tags else []
+                    logger.info(f"LLM auto-tagging completed for doc_id {document_id}. Associated tags: {associated_tag_names}")
+                except Exception as e_autotag:
+                    logger.error(f"Error during LLM auto-tagging for doc_id {document_id}: {e_autotag}", exc_info=True)
+                    # Non-fatal, proceed without LLM tags if analysis fails
+            else:
+                logger.info(f"Skipping LLM auto-tagging for doc_id {document_id} due to empty or error content sample (checked in process_document).") # Updated log
+
+            document_level_tag_ids = [tag.id for tag in db_document.tags] if db_document.tags else []
+            logger.info(f"PROCESS_DOCUMENT DBG: Document-level tag IDs for doc_id {document_id} after auto-tagging (or if skipped): {document_level_tag_ids}")
+
+            # 现在更新文档块的标签关系
+            if db_document.tags and db_chunks_to_save:
+                try:
+                    # 使用全新的方法处理标签关联，避免任何DELETE语句
+                    logger.info(f"开始为{len(db_chunks_to_save)}个文档块关联{len(db_document.tags)}个标签")
+                    
+                    # 获取标签ID列表
+                    tag_ids = [tag.id for tag in db_document.tags]
+                    if not tag_ids:
+                        logger.warning(f"文档{document_id}没有标签可关联")
+                    else:
+                        # 为每个文档块重新创建标签关联
+                        from sqlalchemy import text
+                        
+                        # 首先获取所有块的ID
+                        chunk_ids = [chunk.id for chunk in db_chunks_to_save if chunk.id]
+                        
+                        # 使用原生SQL删除所有块的标签关联
+                        if chunk_ids:
+                            delete_sql = text(f"DELETE FROM document_chunk_tags WHERE document_chunk_id IN ({','.join(map(str, chunk_ids))})")
+                            db.execute(delete_sql)
+                            db.commit()
+                            logger.info(f"已清除{len(chunk_ids)}个文档块的现有标签关联")
+                            
+                            # 为每个块创建新的标签关联
+                            for chunk_id in chunk_ids:
+                                for tag_id in tag_ids:
+                                    # 使用原生SQL插入关联
+                                    insert_sql = text(f"INSERT INTO document_chunk_tags (document_chunk_id, tag_id) VALUES ({chunk_id}, {tag_id})")
+                                    try:
+                                        db.execute(insert_sql)
+                                    except Exception as e_insert:
+                                        # 可能是重复键，忽略
+                                        logger.debug(f"插入块{chunk_id}与标签{tag_id}关联时出错: {str(e_insert)}")
+                            
+                            # 提交所有插入
+                            db.commit()
+                            logger.info(f"成功为{len(chunk_ids)}个文档块创建了{len(tag_ids)}个标签关联")
+                except Exception as e_chunk_tag:
+                    logger.error(f"Error associating tags with document chunks for doc_id {document_id}: {e_chunk_tag}")
+                    db.rollback()
+                    # 这个错误不应该终止整个流程
+                    logger.warning(f"处理继续 - 文档块与标签关联不完整，但文档处理仍将继续")
+
+            # 现在更新向量存储的元数据，添加标签信息
+            if document_level_tag_ids:
+                for lang_doc in langchain_docs_for_vector_store:
+                    # 添加扁平化标签: e.g., tag_10: True, tag_9: True
+                    for tag_id in document_level_tag_ids:
+                        lang_doc.metadata[f"tag_{tag_id}"] = True
+                    
+                # 记录更新
+                logger.info(f"Updated metadata for vector store documents with tag IDs: {document_level_tag_ids}")
+
+            # 4. Add to Vector Store (现在包含了标签信息)
             if langchain_docs_for_vector_store:
                 from vector_store import VectorStore # Ensure import is within reach or global
                 vector_store_instance = VectorStore(repository_id=repository_id) # Assuming one VS per repo or global if repo_id is None

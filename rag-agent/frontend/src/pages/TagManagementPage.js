@@ -270,20 +270,14 @@ const TagManagementPage = () => {
                             onClick={() => showEditModal(record)}
                         />
                     </Tooltip>
-                    <Popconfirm
-                        title="确定要删除这个标签吗？"
-                        onConfirm={() => handleDelete(record.id)}
-                        okText="确定"
-                        cancelText="取消"
-                    >
-                        <Tooltip title="删除标签">
-                            <Button
-                                type="text"
-                                danger
-                                icon={<DeleteOutlined />}
-                            />
-                        </Tooltip>
-                    </Popconfirm>
+                    <Tooltip title="删除标签">
+                        <Button
+                            type="text"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => handleDelete(record.id)}
+                        />
+                    </Tooltip>
                 </Space>
             ),
         },

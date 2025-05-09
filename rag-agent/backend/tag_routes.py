@@ -351,7 +351,9 @@ async def analyze_document_for_tags(
     document_id: int,
     db: Session = Depends(get_db)
 ):
-    """使用AI分析文档内容，自动生成标签和分段摘要"""
+    """使用混合方法分析文档内容，自动生成标签和分段摘要
+    流程：TF-IDF粗提关键词 -> KeyBERT精提语义关键词 -> 构造GPT Prompt -> LLM生成结构化标签
+    """
     try:
         document = db.query(Document).filter(Document.id == document_id).first()
         if not document:
@@ -362,65 +364,123 @@ async def analyze_document_for_tags(
         if not chunks:
             raise HTTPException(status_code=404, detail=f"文档没有可分析的内容块")
         
-        # 汇总内容（限制长度，避免超出API限制）
+        # 汇总所有文档内容用于关键词提取
+        all_content = []
         content_samples = []
-        for chunk in chunks[:10]:  # 最多使用前10个块
+        for chunk in chunks:
             try:
-                content = chunk.content[:500]  # 每块最多取500个字符
-                content_samples.append(content)
+                chunk_content = chunk.content
+                all_content.append(chunk_content)
+                # 每块最多取500个字符作为样本
+                if len(content_samples) < 10:  # 最多使用前10个块
+                    content_samples.append(chunk_content[:500])
             except Exception as e:
                 logger.warning(f"处理文档块 {chunk.id} 时出错: {str(e)}")
         
-        if not content_samples:
-            raise HTTPException(status_code=400, detail="无法提取有效的文档内容样本")
+        if not all_content:
+            raise HTTPException(status_code=400, detail="无法提取有效的文档内容")
         
-        # 构建分析提示
+        # 步骤1: TF-IDF提取关键词
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            
+            # 将所有文本合并为一个文档
+            full_document = " ".join(all_content)
+            
+            # 创建TF-IDF向量化器
+            vectorizer = TfidfVectorizer(max_features=50, stop_words='english')
+            
+            # 对单个文档进行分析
+            tfidf_matrix = vectorizer.fit_transform([full_document])
+            
+            # 获取特征名称(词汇)
+            feature_names = vectorizer.get_feature_names_out()
+            
+            # 获取词汇的TF-IDF分数
+            tfidf_scores = tfidf_matrix.toarray()[0]
+            
+            # 将词汇和它们的分数组合
+            word_scores = list(zip(feature_names, tfidf_scores))
+            
+            # 按分数从高到低排序
+            word_scores.sort(key=lambda x: x[1], reverse=True)
+            
+            # 提取分数最高的30个关键词
+            tfidf_keywords = [word for word, score in word_scores[:30]]
+            logger.info(f"TF-IDF提取的关键词: {tfidf_keywords}")
+            
+        except Exception as e:
+            logger.warning(f"TF-IDF关键词提取失败: {str(e)}")
+            tfidf_keywords = []
+        
+        # 不再使用KeyBERT，直接使用TF-IDF关键词
+        combined_keywords = tfidf_keywords
+        
+        if not combined_keywords and len(all_content) > 0:
+            # 如果关键词提取失败但有内容，使用简单词频作为备选
+            from collections import Counter
+            import re
+            
+            # 简单分词 - 针对中英文混合文本
+            words = re.findall(r'\b\w+\b|[\u4e00-\u9fa5]+', " ".join(all_content))
+            word_counts = Counter(words)
+            combined_keywords = [word for word, _ in word_counts.most_common(30)]
+        
+        # 步骤2: 构造GPT Prompt（带关键词，并让LLM筛选有语义的关键词）
         analysis_prompt = f"""
         请对以下文档内容进行深入分析，提取细粒度的具体特征作为标签，并生成详细摘要。
+        
+        下面是TF-IDF算法提取的关键词: {', '.join(combined_keywords)}
+        
+        请先筛选上面关键词列表，去除没有语义意义的词汇，保留有实际含义的术语、概念和实体。
         
         文档内容样本:
         {' '.join(content_samples[:3])}
         
-        在分析时，请关注以下方面（如果存在）：
-        1. 文档涉及的具体API或接口名称（例如：用户登录API、商品查询接口）
-        2. 文档中提到的具体数据库表和字段（例如：user表、product_id字段）
-        3. 文档中描述的业务流程或功能（例如：订单支付流程、用户注册验证）
-        4. 文档涉及的技术堆栈或组件（例如：React、SpringBoot、MySQL）
-        5. 文档的具体用途（API文档、架构设计、数据模型等）
+        在分析时，优先考虑关键词中提及的概念，并关注以下方面：
+        1. 文档中的主要实体(Entity)：人物、组织、产品、技术组件等
+        2. 实体间的关系(Relation)：依赖、包含、属于、使用等
+        3. 文档中描述的动作(Action)：调用、配置、创建、查询等
+        4. 文档涉及的属性(Property)：状态、特性、参数、字段等
+        5. 文档的具体用途和主题(Topic)
         
         请以JSON格式返回以下信息:
-        1. 文档摘要(summary)：详细描述文档的主要内容和用途
-        2. 原始内容片段(content_samples)：提取3-5个最有代表性的原始内容片段
-        3. 标签列表(tags)，每个标签应尽量具体且有意义，包含:
+        1. 筛选后的关键词(filtered_keywords)：有实际语义的关键词列表
+        2. 文档摘要(summary)：详细描述文档的主要内容和用途
+        3. 关键实体(entities)：提取3-5个最重要的实体，包含名称和描述
+        4. 标签列表(tags)，每个标签应包含:
            - 名称(name)：具体、有辨识度的标签名
            - 描述(description)：对该标签对应内容的详细解释
-           - 类型(type)：标签类型，如"API"、"字段"、"功能"、"技术"、"文档类型"等
+           - 类型(type)："实体"、"关系"、"动作"、"属性"、"主题"等
            - 重要性(importance)：0-1之间的数字
-           - 相关片段(related_content)：与此标签直接相关的原始内容片段
+           - 相关内容(related_content)：与此标签直接相关的内容片段
+           - 相关标签(related_tags)：与此标签相关联的其他标签名称(可选)
         
         示例格式：
         ```json
         {{
+          "filtered_keywords": ["订单系统", "API", "支付", "用户认证", "数据库"],
           "summary": "这是一个订单管理系统API文档，主要描述了订单创建、查询和支付的接口规范...",
-          "content_samples": [
-            "POST /api/orders 接口用于创建新订单，需要提供user_id和product_list参数",
-            "订单状态(order_status)字段可选值：1-待支付，2-已支付，3-已发货，4-已完成",
-            "订单表(orders)包含以下字段：id, user_id, total_amount, status, created_at"
+          "entities": [
+            {{"name": "订单系统", "description": "处理电商平台订单流程的核心系统"}},
+            {{"name": "支付模块", "description": "负责订单支付处理的功能模块"}}
           ],
           "tags": [
             {{
               "name": "订单创建API", 
               "description": "用于创建新订单的POST接口",
-              "type": "API",
+              "type": "动作",
               "importance": 0.9,
-              "related_content": "POST /api/orders 接口用于创建新订单，需要提供user_id和product_list参数"
+              "related_content": "POST /api/orders 接口用于创建新订单",
+              "related_tags": ["订单系统", "用户认证"]
             }},
             {{
-              "name": "order_status字段", 
-              "description": "订单状态字段，有多种状态值代表不同处理阶段",
-              "type": "字段",
+              "name": "订单-用户关系", 
+              "description": "订单与用户的从属关系",
+              "type": "关系",
               "importance": 0.8,
-              "related_content": "订单状态(order_status)字段可选值：1-待支付，2-已支付，3-已发货，4-已完成"
+              "related_content": "订单必须关联到有效的用户ID",
+              "related_tags": ["用户系统", "订单实体"]
             }}
           ]
         }}
@@ -428,13 +488,15 @@ async def analyze_document_for_tags(
         仅返回JSON格式结果，不要添加其它内容。确保标签信息具体且详细，避免过于宽泛的分类。
         """
         
-        # 调用LLM进行分析
+        # 步骤3: 调用LLM生成结构化标签
         analysis_result = await llm_client.generate(analysis_prompt)
         
         # 解析JSON结果
         try:
+            # 确保在这个作用域中导入re模块
+            import re as regex_module
             # 查找JSON部分
-            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', analysis_result)
+            json_match = regex_module.search(r'```json\s*([\s\S]*?)\s*```', analysis_result)
             if json_match:
                 analysis_json = json.loads(json_match.group(1))
             else:
@@ -447,12 +509,29 @@ async def analyze_document_for_tags(
         # 提取分析结果
         summary = analysis_json.get("summary", "")
         tags_data = analysis_json.get("tags", [])
-        content_excerpts = analysis_json.get("content_samples", [])
+        entities_data = analysis_json.get("entities", [])
+        
+        # 将实体也添加为标签
+        for entity in entities_data:
+            if "name" in entity and entity["name"]:
+                tags_data.append({
+                    "name": entity["name"],
+                    "description": entity.get("description", ""),
+                    "type": "实体",
+                    "importance": 0.9,
+                    "related_content": ""
+                })
         
         # 处理标签
         created_tags = []
+        tag_name_to_obj = {}  # 用于建立标签名到标签对象的映射
+        
+        # 第一步：创建或更新所有标签
         for tag_data in tags_data:
             tag_name = tag_data.get("name")
+            if not tag_name:
+                continue
+                
             tag_desc = tag_data.get("description", "")
             tag_type = tag_data.get("type", "general")
             importance = tag_data.get("importance", 0.5)
@@ -461,74 +540,113 @@ async def analyze_document_for_tags(
             # 检查标签是否已存在
             tag = db.query(Tag).filter(Tag.name == tag_name).first()
             if not tag:
+                # 创建新标签
+                tag_dict = {
+                    "name": tag_name,
+                    "description": tag_desc,
+                    "color": "#1890ff",  # 默认颜色
+                }
+                
+                # 根据标签类型设置不同颜色
+                if tag_type == "实体":
+                    tag_dict["color"] = "#722ed1"  # 紫色
+                elif tag_type == "关系":
+                    tag_dict["color"] = "#13c2c2"  # 青色
+                elif tag_type == "动作":
+                    tag_dict["color"] = "#52c41a"  # 绿色
+                elif tag_type == "属性":
+                    tag_dict["color"] = "#faad14"  # 黄色
+                elif tag_type == "主题":
+                    tag_dict["color"] = "#1890ff"  # 蓝色
+                
+                # 尝试添加新字段
                 try:
-                    # 创建新标签，兼容处理各种可能的数据库结构
-                    tag_dict = {
-                        "name": tag_name,
-                        "description": tag_desc,
-                        "color": "#1890ff",  # 默认颜色
-                    }
-                    
-                    # 尝试添加新字段，如果数据库不支持则忽略
-                    try:
-                        # 检查Tag对象是否有新增字段
-                        tag_obj = Tag()
-                        if hasattr(tag_obj, 'tag_type'):
-                            tag_dict["tag_type"] = tag_type
-                        if hasattr(tag_obj, 'importance'):
-                            tag_dict["importance"] = importance
-                        if hasattr(tag_obj, 'related_content'):
-                            tag_dict["related_content"] = related_content
-                    except:
-                        # 忽略任何错误，确保基本功能正常
-                        pass
-                    
-                    # 创建标签
+                    tag_obj = Tag()
+                    if hasattr(tag_obj, 'tag_type'):
+                        tag_dict["tag_type"] = tag_type
+                    if hasattr(tag_obj, 'importance'):
+                        tag_dict["importance"] = importance
+                    if hasattr(tag_obj, 'related_content'):
+                        tag_dict["related_content"] = related_content
+                except:
+                    pass
+                
+                # 创建标签
+                try:
                     tag = Tag(**tag_dict)
                     db.add(tag)
                     db.commit()
                     db.refresh(tag)
-                except Exception as create_error:
-                    logger.error(f"创建标签失败: {str(create_error)}")
-                    # 尝试使用最小字段集创建
+                except Exception as e:
+                    logger.error(f"创建标签失败: {str(e)}")
+                    db.rollback()
+                    # 简化标签创建
                     tag = Tag(
                         name=tag_name,
                         description=tag_desc,
-                        color="#1890ff"
+                        color=tag_dict["color"]
                     )
                     db.add(tag)
                     db.commit()
                     db.refresh(tag)
             else:
-                # 更新已有标签的信息，注意兼容性
+                # 更新已有标签
                 try:
-                    tag.description = tag_desc
+                    if not tag.description or len(tag.description) < len(tag_desc):
+                        tag.description = tag_desc
+                    
                     # 尝试更新新字段
-                    if hasattr(tag, 'tag_type'):
+                    if hasattr(tag, 'tag_type') and tag_type != "general":
                         tag.tag_type = tag_type
-                    if hasattr(tag, 'importance'):
-                        tag.importance = importance
-                    if hasattr(tag, 'related_content'):
+                    if hasattr(tag, 'importance') and importance > 0:
+                        tag.importance = max(tag.importance, importance)  # 取较高的重要性
+                    if hasattr(tag, 'related_content') and related_content:
                         tag.related_content = related_content
+                    
                     db.commit()
                     db.refresh(tag)
-                except Exception as update_error:
-                    logger.error(f"更新标签失败: {str(update_error)}")
-                    # 忽略更新错误，保持原有标签
+                except Exception as e:
+                    logger.error(f"更新标签失败: {str(e)}")
+                    db.rollback()
             
             created_tags.append(tag)
+            tag_name_to_obj[tag_name] = tag
+        
+        # 第二步：创建标签间的关系（如果模型支持）
+        try:
+            for tag_data in tags_data:
+                tag_name = tag_data.get("name")
+                related_tags = tag_data.get("related_tags", [])
+                
+                if not tag_name or not related_tags or tag_name not in tag_name_to_obj:
+                    continue
+                
+                current_tag = tag_name_to_obj[tag_name]
+                
+                for related_tag_name in related_tags:
+                    if related_tag_name in tag_name_to_obj:
+                        related_tag = tag_name_to_obj[related_tag_name]
+                        
+                        # 如果是"关系"类型的标签，尝试设置父子关系
+                        if tag_data.get("type") == "关系" and hasattr(related_tag, 'parent_id'):
+                            # 将related_tag设为current_tag的子标签
+                            related_tag.parent_id = current_tag.id
+                            db.commit()
+        except Exception as e:
+            logger.warning(f"创建标签关系时出错: {str(e)}")
         
         # 将标签关联到文档
         document.tags = created_tags
         db.commit()
         
-        # 构建返回结果，确保兼容性
+        # 构建返回结果
         result_tags = []
         for tag in created_tags:
             tag_dict = {
                 "id": tag.id,
                 "name": tag.name,
-                "description": tag.description
+                "description": tag.description,
+                "color": tag.color
             }
             # 尝试添加新字段
             try:
@@ -542,18 +660,18 @@ async def analyze_document_for_tags(
                 pass
             result_tags.append(tag_dict)
         
-        # 返回结果
+        # 返回结果 - 增加筛选后的关键词
         return {
             "success": True,
             "summary": summary,
-            "content_excerpts": content_excerpts,
+            "keywords": analysis_json.get("filtered_keywords", combined_keywords[:20]),
             "tags": result_tags
         }
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"分析文档失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"分析文档失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"处理文档失败: {str(e)}")
 
 @router.put("/tags/{tag_id}")
 async def update_tag(
