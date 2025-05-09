@@ -5,7 +5,7 @@ import json
 import logging
 import re
 
-from models import get_db, Tag, Document, DocumentChunk, document_tags, document_chunk_tags
+from models import get_db, Tag, Document, DocumentChunk, document_tags, document_chunk_tags, KnowledgeBase
 from config import get_autogen_config
 
 router = APIRouter(prefix="", tags=["tags-management"])
@@ -633,4 +633,51 @@ async def update_tag(
         raise
     except Exception as e:
         logger.error(f"更新标签失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"更新标签失败: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"更新标签失败: {str(e)}")
+
+@router.get("/tags/{tag_id}/documents")
+async def get_tag_documents(
+    tag_id: int,
+    db: Session = Depends(get_db)
+):
+    """获取标签关联的所有文档"""
+    try:
+        # 查找标签
+        tag = db.query(Tag).filter(Tag.id == tag_id).first()
+        if not tag:
+            raise HTTPException(status_code=404, detail=f"标签ID {tag_id} 不存在")
+        
+        # 获取与该标签关联的所有文档
+        documents = db.query(Document)\
+            .join(document_tags, Document.id == document_tags.c.document_id)\
+            .filter(document_tags.c.tag_id == tag_id)\
+            .all()
+        
+        # 构建响应数据
+        result_documents = []
+        for doc in documents:
+            # 获取知识库名称
+            kb_name = None
+            if doc.knowledge_base_id:
+                kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.knowledge_base_id).first()
+                if kb:
+                    kb_name = kb.name
+            
+            result_documents.append({
+                "id": doc.id,
+                "source": doc.source,
+                "document_type": doc.document_type,
+                "status": doc.status,
+                "chunks_count": doc.chunks_count,
+                "added_at": doc.added_at,
+                "processed_at": doc.processed_at,
+                "knowledge_base_id": doc.knowledge_base_id,
+                "knowledge_base_name": kb_name
+            })
+        
+        return {"documents": result_documents}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取标签关联文档失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取标签关联文档失败: {str(e)}") 
