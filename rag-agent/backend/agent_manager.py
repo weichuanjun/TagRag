@@ -1,21 +1,65 @@
 import os
 import json
 import autogen
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel
 import asyncio
+import logging
+import math
+import datetime
 
-# 导入VectorStore
+# 导入VectorStore 和数据库模型
 from vector_store import VectorStore
+from models import Tag as TagModel, get_db
+from models import Tag as DBTag # Ensure DBTag is imported
+from sqlalchemy.orm import Session # Ensure Session is imported for type hinting if needed
 
-# 导入配置文件
-from config import get_autogen_config, AGENT_PROMPTS
+# 导入配置文件和新的服务
+from config import (
+    get_autogen_config,
+    AGENT_PROMPTS,
+    TAG_FILTER_RETRIEVAL_K,
+    CONTEXT_TOKEN_LIMIT,
+    T_CUS_EMBEDDING_MODEL # Needed for embedding instance in TagRAG
+)
+from scoring_service import calculate_t_cus_score, greedy_token_constrained_selection, TagGraphAccessor
+from tag_routes import LLMClient
+from langchain_community.embeddings import HuggingFaceEmbeddings # Moved import up
+
+# --- Pydantic Models for API Response ---
+class ReferencedTagInfo(BaseModel):
+    id: int
+    name: str
+    tag_type: Optional[str] = None # 从 generated_tags_tq 获取
+
+class ReferencedExcerptInfo(BaseModel):
+    document_id: Optional[int] = None
+    document_source: Optional[str] = None # 从块元数据获取 'source'
+    chunk_id: Optional[str] = None # 例如 f"{document_id}_{chunk_index}"
+    content: str
+    page_number: Optional[int] = None # 从块元数据获取
+    score: Optional[float] = None # T-CUS score (如果可用)
+    # token_count: Optional[int] = None # 从块元数据获取 (如果需要)
+    # chunk_index: Optional[int] = None # 从块元数据获取 (如果需要构建 chunk_id)
+
+class TagRAGChatResponse(BaseModel):
+    answer: str
+    thinking_process: List[Dict[str, Any]]
+    referenced_tags: List[ReferencedTagInfo]
+    referenced_excerpts: List[ReferencedExcerptInfo]
+    user_query: str # 回传用户原始查询
+    knowledge_base_id: Optional[int] = None # 回传知识库ID
+# --- End Pydantic Models ---
+
+logger = logging.getLogger(__name__)
 
 class AgentManager:
     """AutoGen智能体管理器，负责协调多个智能体生成回答"""
     
-    def __init__(self, vector_store):
+    def __init__(self, vector_store: VectorStore, db_session_factory=get_db, db: Optional[Session] = None):
         self.vector_store = vector_store
+        self.db_session_factory = db_session_factory
+        self.db = db # Store db session
         
         # 配置路径
         os.makedirs("data/agent_configs", exist_ok=True)
@@ -31,6 +75,28 @@ class AgentManager:
         
         # 存储思考过程
         self.thinking_process = []
+        self.llm_client = LLMClient()
+        try:
+            self.embedding_instance = HuggingFaceEmbeddings(model_name=T_CUS_EMBEDDING_MODEL)
+        except Exception as e:
+             logger.error(f"Failed to initialize default embedding model {T_CUS_EMBEDDING_MODEL}: {e}")
+             self.embedding_instance = None # Handle potential init failure
+    
+    def log_thinking_process(self, step_info: str, agent_name: str, level: str = "INFO", status: Optional[str] = None, **kwargs):
+        """Helper method to log steps in the thinking process."""
+        log_entry = {
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "agent": agent_name,
+            "step_info": step_info,
+            "level": level,
+            **kwargs
+        }
+        if status:
+            log_entry["status"] = status
+        
+        self.thinking_process.append(log_entry)
+        # Also log to standard logger for real-time visibility if needed
+        logger.log(getattr(logging, level.upper(), logging.INFO), f"ThinkingProcess - {agent_name}: {step_info} {kwargs if kwargs else ''}")
     
     def _init_agents(self, use_code_analysis=False, prompt_configs=None):
         """初始化智能体"""
@@ -39,11 +105,7 @@ class AgentManager:
             name="用户代理",
             human_input_mode="NEVER",
             is_termination_msg=lambda x: "TERMINATE" in x.get("content", ""),
-            code_execution_config={
-                "last_n_messages": 1,
-                "work_dir": "agents_work_dir",
-                "use_docker": False,
-            },
+            code_execution_config=False,
             max_consecutive_auto_reply=self.max_consecutive_auto_reply,
         )
         
@@ -54,100 +116,71 @@ class AgentManager:
                 "name": name,
                 "system_message": system_message,
                 "human_input_mode": "NEVER",
-                "max_consecutive_auto_reply": 3,
+                "max_consecutive_auto_reply": self.max_consecutive_auto_reply,
                 "llm_config": llm_config or self.llm_config,
                 **(config or {})
             }
 
         # 创建智能体
-        retrieval_system = AGENT_PROMPTS.get("retrieval_agent", "你是一个专门负责文档检索的智能体")
+        retrieval_system = AGENT_PROMPTS.get("retrieval_agent", "Retrieval agent prompt missing.")
         if prompt_configs and "retrieval_agent" in prompt_configs:
             retrieval_system = prompt_configs["retrieval_agent"]
-            print(f"使用自定义retrieval_agent提示词: {retrieval_system[:50]}...")
         self.retrieval_agent = autogen.AssistantAgent(
             **get_agent_config("retrieval_agent", retrieval_system)
         )
         
-        analyst_system = AGENT_PROMPTS.get("analyst_agent", "你是一个专门负责分析和综合信息的智能体")
+        analyst_system = AGENT_PROMPTS.get("analyst_agent", "Analyst agent prompt missing.")
         if prompt_configs and "analyst_agent" in prompt_configs:
             analyst_system = prompt_configs["analyst_agent"]
-            print(f"使用自定义analyst_agent提示词: {analyst_system[:50]}...")
         self.analyst_agent = autogen.AssistantAgent(
             **get_agent_config("analyst_agent", analyst_system)
         )
         
         # 如果开启了代码分析
-        code_analyst_system = AGENT_PROMPTS.get("code_analyst_agent", "你是一个专门负责代码分析的智能体")
+        code_analyst_system = AGENT_PROMPTS.get("code_analyst_agent", "Code analyst agent prompt missing.")
         if prompt_configs and "code_analyst_agent" in prompt_configs:
             code_analyst_system = prompt_configs["code_analyst_agent"]
-            print(f"使用自定义code_analyst_agent提示词: {code_analyst_system[:50]}...")
         self.code_analyst_agent = autogen.AssistantAgent(
             **get_agent_config("code_analyst_agent", code_analyst_system)
         )
         
-        response_system = AGENT_PROMPTS.get("response_agent", "你是一个专门负责生成最终回复的智能体")
+        response_system = AGENT_PROMPTS.get("response_agent", "Response agent prompt missing.")
         if prompt_configs and "response_agent" in prompt_configs:
             response_system = prompt_configs["response_agent"]
-            print(f"使用自定义response_agent提示词: {response_system[:50]}...")
-        self.response_agent = autogen.AssistantAgent(
-            **get_agent_config("response_agent", response_system)
+        self.final_answer_agent = autogen.AssistantAgent(
+            **get_agent_config("TagRAG_AnswerAgent", response_system)
         )
     
     def _extract_chat_history(self):
         """从所有代理的聊天记录中提取思考过程"""
         self.thinking_process = []
         
-        # 获取检索代理对话
-        if hasattr(self.retrieval_agent, 'chat_messages') and self.user_proxy in self.retrieval_agent.chat_messages:
-            for message in self.retrieval_agent.chat_messages[self.user_proxy]:
-                self.thinking_process.append({
-                    "sender": "检索代理",
-                    "recipient": "用户代理",
-                    "content": message.get("content", ""),
-                    "timestamp": asyncio.get_event_loop().time()
-                })
+        all_agents = [self.retrieval_agent, self.analyst_agent, self.code_analyst_agent, self.final_answer_agent]
         
-        # 获取分析代理对话
-        if hasattr(self.analyst_agent, 'chat_messages') and self.user_proxy in self.analyst_agent.chat_messages:
-            for message in self.analyst_agent.chat_messages[self.user_proxy]:
-                self.thinking_process.append({
-                    "sender": "分析代理",
-                    "recipient": "用户代理",
-                    "content": message.get("content", ""),
-                    "timestamp": asyncio.get_event_loop().time()
-                })
-        
-        # 获取代码分析代理对话
-        if hasattr(self.code_analyst_agent, 'chat_messages') and self.user_proxy in self.code_analyst_agent.chat_messages:
-            for message in self.code_analyst_agent.chat_messages[self.user_proxy]:
-                self.thinking_process.append({
-                    "sender": "代码分析代理",
-                    "recipient": "用户代理",
-                    "content": message.get("content", ""),
-                    "timestamp": asyncio.get_event_loop().time()
-                })
-        
-        # 获取回复生成代理对话
-        if hasattr(self.response_agent, 'chat_messages') and self.user_proxy in self.response_agent.chat_messages:
-            for message in self.response_agent.chat_messages[self.user_proxy]:
-                self.thinking_process.append({
-                    "sender": "回复生成代理",
-                    "recipient": "用户代理",
-                    "content": message.get("content", ""),
-                    "timestamp": asyncio.get_event_loop().time()
-                })
-        
-        # 获取用户代理的发送消息
-        agents = [self.retrieval_agent, self.analyst_agent, self.code_analyst_agent, self.response_agent]
-        for agent in agents:
+        for agent in all_agents:
+            if hasattr(agent, 'chat_messages') and self.user_proxy in agent.chat_messages:
+                for message_list in agent.chat_messages[self.user_proxy]:
+                    for message in message_list if isinstance(message_list, list) else [message_list]:
+                        if isinstance(message, dict):
+                            self.thinking_process.append({
+                                "sender": agent.name,
+                                "recipient": self.user_proxy.name,
+                                "content": message.get("content", ""),
+                                "timestamp": asyncio.get_event_loop().time()
+                            })
+            
             if hasattr(self.user_proxy, 'chat_messages') and agent in self.user_proxy.chat_messages:
-                for message in self.user_proxy.chat_messages[agent]:
-                    self.thinking_process.append({
-                        "sender": "用户代理",
-                        "recipient": agent.name,
-                        "content": message.get("content", ""),
-                        "timestamp": asyncio.get_event_loop().time()
-                    })
+                 for message_list in self.user_proxy.chat_messages[agent]:
+                    for message in message_list if isinstance(message_list, list) else [message_list]:
+                        if isinstance(message, dict):
+                            self.thinking_process.append({
+                                "sender": self.user_proxy.name,
+                                "recipient": agent.name,
+                                "content": message.get("content", ""),
+                                "timestamp": asyncio.get_event_loop().time()
+                            })
+        
+        return self.thinking_process
     
     def get_thinking_process(self):
         """获取智能体思考过程"""
@@ -156,8 +189,366 @@ class AgentManager:
     def clear_thinking_process(self):
         """清空思考过程"""
         self.thinking_process = []
+        self.user_proxy.reset()
+        agents_to_reset = [self.retrieval_agent, self.analyst_agent, self.code_analyst_agent, self.final_answer_agent]
+        for agent in agents_to_reset:
+            if agent: agent.reset()
     
-    async def generate_answer(
+    async def _get_query_tags_tq(self, user_query: str, knowledge_base_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        self.log_thinking_process("开始生成查询标签 T(q)", "QueryTagGeneratorAgent", user_query=user_query)
+        
+        # Step 1: Get existing system tags (T(system))
+        system_tags_str = "无可用系统标签"
+        system_tag_names_for_prompt = [] # Store just names for the prompt
+
+        if self.db:
+            try:
+                all_db_tags = self.db.query(DBTag.name).all() # Query only names
+                if all_db_tags:
+                    system_tag_names_for_prompt = [tag_name for (tag_name,) in all_db_tags]
+                    if system_tag_names_for_prompt:
+                        system_tags_str = "\\\\n- " + "\\\\n- ".join(system_tag_names_for_prompt)
+                        self.log_thinking_process(f"Found {len(system_tag_names_for_prompt)} system tags to consider for T(q) prompt.", "QueryTagGeneratorAgent", system_tags_count=len(system_tag_names_for_prompt))
+                    else:
+                        self.log_thinking_process("No system tag names found in DB for T(q) prompt.", "QueryTagGeneratorAgent")
+                else:
+                    self.log_thinking_process("DB query for tags returned no results for T(q) prompt.", "QueryTagGeneratorAgent")
+
+            except Exception as e_db_tags:
+                self.log_thinking_process(f"Error fetching system tags for T(q) prompt: {e_db_tags}", "QueryTagGeneratorAgent", level="ERROR", error_details=str(e_db_tags))
+        else:
+            self.log_thinking_process("DB session not available, cannot fetch system tags for T(q) prompt.", "QueryTagGeneratorAgent", level="WARNING")
+
+        prompt = f'''
+用户查询: \"{user_query}\"
+
+基于以下【可用标签列表】，请仔细分析用户查询，并选择或生成与用户查询最相关的1-3个关键词或短语作为标签。
+
+【重要规则】：
+1. 你必须返回至少一个标签，返回空列表是不允许的。
+2. 如果【可用标签列表】中有直接匹配或高度相关的标签，请优先选择它们。
+3. 对于一般性查询（如项目介绍、系统概述等），若【可用标签列表】中没有匹配项，请生成最相关的新标签。
+4. 返回的标签必须与用户查询内容紧密相关，不要随机选择不相关的标签。
+
+请以JSON字符串列表的格式返回结果。例如：[\"选择的标签1\", \"新生成的标签2\"]。
+
+【可用标签列表】:
+{system_tags_str}
+
+请仅返回有效的JSON字符串列表，并确保列表中包含至少一个与查询紧密相关的标签。
+'''
+        self.log_thinking_process(
+            "发送给LLM用于生成T(q)的完整Prompt",
+            "QueryTagGeneratorAgent",
+            prompt_details={"full_prompt_tq": prompt}
+        )
+        
+        if not self.llm_client:
+            self.log_thinking_process("LLMClient not initialized.", "QueryTagGeneratorAgent", level="ERROR")
+            return []
+            
+        llm_response_str = await self.llm_client.generate(prompt)
+        self.log_thinking_process(f"LLM原始返回 (T(q)): '{llm_response_str}'", "QueryTagGeneratorAgent", llm_raw_response=llm_response_str)
+
+        generated_tags_tq: List[Dict[str, Any]] = [] # Final list of {'id': int, 'name': str, 'tag_type': str}
+        tag_names_from_llm: List[str] = []
+
+        if llm_response_str:
+            try:
+                cleaned_response = llm_response_str.strip()
+                if cleaned_response.startswith("```json"):
+                    cleaned_response = cleaned_response[len("```json"):].strip()
+                elif cleaned_response.startswith("```"):
+                    cleaned_response = cleaned_response[len("```"):].strip()
+                if cleaned_response.endswith("```"):
+                    cleaned_response = cleaned_response[:-len("```"):].strip()
+                
+                self.log_thinking_process(f"Cleaned LLM response for JSON parsing: {cleaned_response}", "QueryTagGeneratorAgent", cleaned_llm_response=cleaned_response)
+                parsed_llm_output = json.loads(cleaned_response)
+                
+                if isinstance(parsed_llm_output, list) and all(isinstance(tag_name, str) for tag_name in parsed_llm_output):
+                    tag_names_from_llm = parsed_llm_output
+                elif isinstance(parsed_llm_output, dict) and "tags" in parsed_llm_output and isinstance(parsed_llm_output["tags"], list):
+                    tag_names_from_llm = parsed_llm_output["tags"]
+                else:
+                    self.log_thinking_process(f"LLM T(q) response format unexpected: {parsed_llm_output}", "QueryTagGeneratorAgent", level="WARNING", parsed_output=parsed_llm_output)
+
+                if tag_names_from_llm and self.db:
+                    for tag_name_raw in tag_names_from_llm:
+                        tag_name = tag_name_raw.strip()
+                        if not tag_name: continue
+
+                        tag_orm_instance = self.db.query(DBTag).filter(DBTag.name.ilike(tag_name)).first()
+                        tag_type_for_response = "existing_system_tag"
+                        if not tag_orm_instance:
+                            # Check if it's one of the "newly generated" placeholder names if we implement that pattern
+                            # For now, assume any non-existing is a new query-generated tag
+                            
+                            # Create new tag if it doesn't exist
+                            self.log_thinking_process(f"T(q)中出现新标签 '{tag_name}'，将为其创建记录。", "QueryTagGeneratorAgent", new_tag_name=tag_name)
+                            tag_orm_instance = DBTag(
+                                name=tag_name, 
+                                description=f"LLM为查询 '{user_query[:50]}...' 生成的标签", 
+                                tag_type="llm_query_generated" # Specific type for LLM generated for a query
+                            )
+                            try:
+                                self.db.add(tag_orm_instance)
+                                self.db.commit()
+                                self.db.refresh(tag_orm_instance)
+                                self.log_thinking_process(f"T(q)中识别到新创标签: '{tag_orm_instance.name}' (ID: {tag_orm_instance.id})", "QueryTagGeneratorAgent", tag_info={"id": tag_orm_instance.id, "name": tag_orm_instance.name, "type": "newly_created_for_query"})
+                                tag_type_for_response = "newly_created_for_query"
+                            except Exception as e_create_tag:
+                                self.log_thinking_process(f"为T(q)创建新标签 '{tag_name}' 失败: {e_create_tag}", "QueryTagGeneratorAgent", level="ERROR", error_details=str(e_create_tag))
+                                self.db.rollback()
+                                continue # Skip this tag if creation failed
+                        else:
+                            tag_type_for_response = tag_orm_instance.tag_type or "existing_system_tag" # Use existing type if available
+                            self.log_thinking_process(f"T(q)中识别到已存在系统标签: '{tag_orm_instance.name}' (ID: {tag_orm_instance.id})", "QueryTagGeneratorAgent", tag_info={"id": tag_orm_instance.id, "name": tag_orm_instance.name, "type": "existing_system_tag"})
+                        
+                        generated_tags_tq.append({
+                            "id": tag_orm_instance.id, 
+                            "name": tag_orm_instance.name,
+                            "tag_type": tag_type_for_response 
+                        })
+            except json.JSONDecodeError:
+                self.log_thinking_process(f"LLM T(q) response is not valid JSON: {cleaned_response}", "QueryTagGeneratorAgent", level="ERROR", invalid_json_response=cleaned_response)
+            except Exception as e_parse:
+                 self.log_thinking_process(f"解析或处理LLM T(q)响应时出错: {e_parse}", "QueryTagGeneratorAgent", level="ERROR", error_details=str(e_parse), raw_response=llm_response_str)
+        else:
+            self.log_thinking_process("LLM T(q) response was empty.", "QueryTagGeneratorAgent", level="WARNING")
+
+        self.log_thinking_process(f"完成T(q)生成。共生成 {len(generated_tags_tq)} 个标签。", "QueryTagGeneratorAgent", status="Completed", generated_tq_count=len(generated_tags_tq), final_tq_list=[{"id": t["id"], "name": t["name"]} for t in generated_tags_tq])
+        return generated_tags_tq
+
+    async def generate_answer_tag_rag(
+        self, 
+        user_query: str,
+        vector_store_for_query: VectorStore,
+        knowledge_base_id: Optional[int] = None,
+        prompt_configs: Optional[Dict[str, str]] = None
+    ) -> TagRAGChatResponse:
+        self.clear_thinking_process()
+        self.log_thinking_process("TagRAG流程开始", "SystemCoordinator", user_query=user_query, kb_id=knowledge_base_id)
+
+        final_referenced_tags_info: List[ReferencedTagInfo] = []
+        final_referenced_excerpts_info: List[ReferencedExcerptInfo] = []
+        final_answer = "抱歉，我无法处理您的请求。"
+        generated_tags_tq_list_of_dicts: List[Dict[str, Any]] = []
+
+        tag_graph_accessor = None
+        original_self_db = self.db
+        db_session_created_here = False
+        db_session = None
+
+        try:
+            if self.db:
+                db_session = self.db
+            else:
+                db_session = next(self.db_session_factory())
+                self.db = db_session
+                db_session_created_here = True
+            
+            tag_graph_accessor = TagGraphAccessor(db_session=db_session)
+
+            generated_tags_tq_list_of_dicts = await self._get_query_tags_tq(user_query, knowledge_base_id)
+            
+            final_referenced_tags_info.clear()
+            for tag_dict in generated_tags_tq_list_of_dicts:
+                if isinstance(tag_dict, dict) and 'id' in tag_dict and 'name' in tag_dict:
+                    final_referenced_tags_info.append(ReferencedTagInfo(
+                        id=tag_dict['id'], 
+                        name=tag_dict['name'], 
+                        tag_type=tag_dict.get('tag_type')
+                    ))
+                else:
+                    self.log_thinking_process(f"Skipping malformed tag_dict in T(q) list: {tag_dict}", "SystemCoordinator", level="WARNING")
+
+            query_tag_ids_for_filtering = [tag.id for tag in final_referenced_tags_info] # Use .id from Pydantic model
+            query_tag_names_for_logging = [tag.name for tag in final_referenced_tags_info]
+            self.log_thinking_process(
+                f"QueryTagGeneratorAgent 为查询 '{user_query}' 生成的标签ID进行过滤: {query_tag_ids_for_filtering} (名称: {query_tag_names_for_logging})",
+                "SystemCoordinator",
+                filtering_tag_ids=query_tag_ids_for_filtering,
+                filtering_tag_names=query_tag_names_for_logging
+            )
+
+            metadata_filter_for_tags: Dict[str, Any] = {}
+            if query_tag_ids_for_filtering:
+                conditions = [{f"tag_{tag_id}": True} for tag_id in query_tag_ids_for_filtering]
+                if conditions:
+                    if len(conditions) == 1:
+                        metadata_filter_for_tags = conditions[0]
+                    else:
+                        metadata_filter_for_tags = {"$or": conditions}
+            
+            self.log_thinking_process(
+                "TagFilterAgent 将使用以下元数据过滤器进行块检索",
+                "TagFilterAgent",
+                filter_condition=metadata_filter_for_tags
+            )
+
+            candidate_chunks_raw = await vector_store_for_query.search(
+                query=user_query, 
+                k=TAG_FILTER_RETRIEVAL_K, 
+                knowledge_base_id=knowledge_base_id, 
+                metadata_filter=metadata_filter_for_tags if metadata_filter_for_tags else None
+            )
+            self.log_thinking_process(f"TagFilterAgent 检索到 {len(candidate_chunks_raw)} 个原始候选块。", "TagFilterAgent", status="Completed", retrieved_count_raw=len(candidate_chunks_raw))
+
+            # 新增：如果标签过滤没有找到任何块，退化到普通向量搜索
+            if len(candidate_chunks_raw) == 0 and metadata_filter_for_tags:
+                self.log_thinking_process("标签过滤没有找到文档块，退化到普通向量搜索模式。", "TagFilterAgent", status="Fallback", filter_condition=metadata_filter_for_tags)
+                candidate_chunks_raw = await vector_store_for_query.search(
+                    query=user_query, 
+                    k=TAG_FILTER_RETRIEVAL_K, 
+                    knowledge_base_id=knowledge_base_id, 
+                    metadata_filter=None # 不使用标签过滤
+                )
+                self.log_thinking_process(f"TagFilterAgent (回退模式) 检索到 {len(candidate_chunks_raw)} 个原始候选块。", "TagFilterAgent", status="Completed", retrieved_count_raw=len(candidate_chunks_raw), retrieval_mode="fallback_no_filter")
+
+            scored_chunks: List[Dict[str, Any]] = []
+            if candidate_chunks_raw:
+                self.log_thinking_process(f"ExcerptAgent 开始对 {len(candidate_chunks_raw)} 个候选块进行 T-CUS 评分。", "ExcerptAgent", candidates_count=len(candidate_chunks_raw))
+                query_embedding = None
+                if self.embedding_instance:
+                    try:
+                        query_embedding = self.embedding_instance.embed_query(user_query)
+                    except Exception as e_embed_query:
+                        self.log_thinking_process(f"生成查询嵌入时出错: {e_embed_query}", "ExcerptAgent", level="ERROR", error_details=str(e_embed_query))
+                else:
+                    self.log_thinking_process("嵌入模型实例不可用，无法生成查询嵌入。", "ExcerptAgent", level="ERROR")
+
+                if query_embedding:
+                    for i_chunk, chunk_dict_from_search in enumerate(candidate_chunks_raw):
+                        chunk_text = chunk_dict_from_search.get("text", "")
+                        chunk_metadata = chunk_dict_from_search.get("metadata", {})
+                        if not chunk_text: 
+                            self.log_thinking_process(f"块 {i_chunk} 内容为空，跳过评分。", "ExcerptAgent", level="WARNING", chunk_index=i_chunk)
+                            continue
+
+                        source_file = chunk_metadata.get('source', '未知文件')
+                        chunk_idx_from_meta = chunk_metadata.get('chunk_index', i_chunk)
+                        
+                        # Log processing of chunk (can be detailed here or briefer)
+                        self.log_thinking_process(f"ExcerptAgent 处理块 {i_chunk+1}/{len(candidate_chunks_raw)}: 文件='{source_file}', 索引={chunk_idx_from_meta}", "ExcerptAgent")
+                        
+                        try:
+                            score = await calculate_t_cus_score(
+                                query_embedding=query_embedding,
+                                chunk_content=chunk_text, 
+                                chunk_metadata=chunk_metadata, # Pass full metadata
+                                semantic_similarity_score=chunk_dict_from_search.get('score', 0.0), 
+                                embedding_model_instance=self.embedding_instance, 
+                                tag_graph_accessor=tag_graph_accessor, 
+                                query_tags_tq_ids=query_tag_ids_for_filtering, 
+                                chunk_embedding=chunk_dict_from_search.get('embedding') 
+                            )
+                            scored_chunks.append({
+                                "content": chunk_text,
+                                "metadata": chunk_metadata, # Keep original metadata from search
+                                "score": score, # This is the T-CUS score
+                                "token_count": chunk_metadata.get("token_count", len(chunk_text.split())) # Use from meta or estimate
+                            })
+                            self.log_thinking_process(f"ExcerptAgent 评分完成: 文件='{source_file}', 索引={chunk_idx_from_meta}, T-CUS分数={score:.4f}", "ExcerptAgent")
+                        except Exception as score_err:
+                            self.log_thinking_process(f"ExcerptAgent 评分块时出错 (文件='{source_file}', 索引={chunk_idx_from_meta}): {score_err}", "ExcerptAgent", level="ERROR", error_details=str(score_err))
+            self.log_thinking_process(f"ExcerptAgent 完成对候选块的评分。共评分 {len(scored_chunks)} 个块。", "ExcerptAgent", status="Completed", scored_chunk_count=len(scored_chunks))
+
+            selected_context_for_llm = ""
+            selected_chunk_data_objects_for_api: List[Dict[str, Any]] = [] 
+            final_referenced_excerpts_info.clear()
+
+            self.log_thinking_process(f"ContextAssemblerAgent 开始选择上下文。已评分块数量: {len(scored_chunks)}, Token上限: {CONTEXT_TOKEN_LIMIT}", "ContextAssemblerAgent", scored_chunks_count=len(scored_chunks), token_limit=CONTEXT_TOKEN_LIMIT)
+            try:
+                if scored_chunks:
+                    selected_context_for_llm, selected_chunk_data_objects_for_api = greedy_token_constrained_selection(
+                        scored_chunks, 
+                        CONTEXT_TOKEN_LIMIT
+                    )
+                    self.log_thinking_process(
+                        f"ContextAssemblerAgent 上下文组装完成。最终上下文长度: {len(selected_context_for_llm)} 字符。共选定 {len(selected_chunk_data_objects_for_api)} 个块。",
+                        "ContextAssemblerAgent", 
+                        status="Completed", 
+                        final_context_length_chars=len(selected_context_for_llm),
+                        selected_chunks_for_context_count=len(selected_chunk_data_objects_for_api)
+                    )
+                    
+                    for i, sel_chunk_data in enumerate(selected_chunk_data_objects_for_api): # Added enumerate for unique pseudo ID
+                        meta = sel_chunk_data.get("metadata", {})
+                        
+                        doc_id_val = meta.get("document_id")
+                        doc_id = int(doc_id_val) if doc_id_val is not None else None
+                        
+                        chunk_idx_val = meta.get("chunk_index")
+                        chunk_idx = int(chunk_idx_val) if chunk_idx_val is not None else None
+
+                        page_num_val = meta.get("page_number") or meta.get("page")
+                        page_num = int(page_num_val) if page_num_val is not None else None
+
+                        score_val = sel_chunk_data.get("score") # This is the T-CUS score from scored_chunks
+                        score_float = float(score_val) if score_val is not None else None
+
+                        chunk_id_str = meta.get("id") # Prefer 'id' from metadata if it's the ChromaDB chunk ID
+                        if not chunk_id_str and doc_id is not None and chunk_idx is not None:
+                            chunk_id_str = f"{doc_id}_{chunk_idx}"
+                        if not chunk_id_str:
+                            content_preview = sel_chunk_data.get("content", "")[:20]
+                            chunk_id_str = f"pseudo_{hash(content_preview)}_{i}" # Use enumerate index 'i'
+
+                        final_referenced_excerpts_info.append(ReferencedExcerptInfo(
+                            document_id=doc_id,
+                            document_source=meta.get("source", "未知来源"),
+                            chunk_id=chunk_id_str,
+                            content=sel_chunk_data.get("content", ""),
+                            page_number=page_num,
+                            score=score_float 
+                        ))
+                else:
+                    self.log_thinking_process("没有已评分的块可供组装上下文。", "ContextAssemblerAgent", level="WARNING")
+            except Exception as e_context:
+                self.log_thinking_process(f"ContextAssemblerAgent 组装上下文时出错: {e_context}", "ContextAssemblerAgent", level="ERROR", error_details=str(e_context), exc_info=True)
+
+            self.log_thinking_process("TagRAG_AnswerAgent 开始生成最终答案。", "TagRAG_AnswerAgent")
+            final_answer_agent_prompt = (
+                f"User Query: {user_query}\\\\n\\\\n"
+                f"Relevant Context:\\\\n{selected_context_for_llm if selected_context_for_llm and selected_context_for_llm.strip() else 'No relevant context found after filtering and scoring.'}\\\\n\\\\n"
+                f"Please answer the user query based on the provided context. If the context is insufficient or irrelevant, state that you cannot answer based on the provided information."
+            )
+            self.log_thinking_process(
+                "发送给LLM用于生成最终答案的Prompt", 
+                "TagRAG_AnswerAgent",
+                final_prompt_details={"full_final_prompt": final_answer_agent_prompt}
+            )
+
+            if self.final_answer_agent and self.user_proxy and self.llm_client: 
+                final_answer = await self.llm_client.generate(final_answer_agent_prompt)
+            else:
+                final_answer = "Final Answer Agent, User Proxy 或 LLMClient 未初始化。"
+                self.log_thinking_process("FinalAnswerAgent, UserProxy 或 LLMClient 未初始化。", "TagRAG_AnswerAgent", level="ERROR")
+            
+            self.log_thinking_process(f"TagRAG_AnswerAgent 生成的最终答案 (前100字符): '{final_answer[:100]}...'", "TagRAG_AnswerAgent", status="Completed", final_answer_preview=final_answer[:100])
+
+        except Exception as e:
+            self.log_thinking_process(f"TagRAG流程中发生意外错误: {e}", "SystemCoordinator", level="CRITICAL", error_details=str(e), exc_info=True)
+            final_answer = f"处理您的请求时发生内部错误: {str(e)}"
+        finally:
+            if db_session_created_here and db_session: 
+                try:
+                    db_session.close()
+                except Exception as e_db_close:
+                    logger.error(f"Error closing DB session created in generate_answer_tag_rag: {e_db_close}", exc_info=True)
+            self.db = original_self_db 
+
+        return TagRAGChatResponse(
+            answer=final_answer,
+            thinking_process=self.get_thinking_process(),
+            referenced_tags=final_referenced_tags_info, 
+            referenced_excerpts=final_referenced_excerpts_info, 
+            user_query=user_query,
+            knowledge_base_id=knowledge_base_id
+        )
+
+    async def generate_answer_original(
         self, 
         user_query: str,
         use_code_analysis: bool = False,
@@ -167,34 +558,16 @@ class AgentManager:
         knowledge_base_id: Optional[int] = None,
         prompt_configs: Optional[Dict[str, str]] = None
     ) -> str:
-        """生成对用户问题的回答
-        
-        Args:
-            user_query: 用户查询
-            use_code_analysis: 是否使用代码分析
-            code_analyzer: 代码分析器实例
-            vector_store: 向量存储实例
-            repository_id: 代码库ID
-            knowledge_base_id: 知识库ID
-            prompt_configs: 自定义prompt配置
-            
-        Returns:
-            str: 生成的回答
+        """生成对用户问题的回答 (保留的原有逻辑)
         """
+        self.clear_thinking_process()
+        self.thinking_process.append({"operation": "generate_answer_original", "user_query": user_query, "use_code_analysis": use_code_analysis, "kb_id": knowledge_base_id, "repo_id": repository_id })
+
         try:
-            # 清空之前的思考过程
-            self.clear_thinking_process()
-            
-            # 如果有自定义提示词，重新初始化智能体
-            if prompt_configs:
-                self._init_agents(use_code_analysis, prompt_configs)
-            
-            # 1. 从向量存储中检索相关文档
-            # 使用正确的 vector_store 实例（它内部已经绑定了 repo_id，如果适用）
             current_vector_store = vector_store or self.vector_store
             retrieval_results = await current_vector_store.search(user_query, k=5, knowledge_base_id=knowledge_base_id)
+            self.thinking_process.append({"task": "OriginalRetrieval", "retrieved_count": len(retrieval_results)})
             
-            # 2. 准备检索结果
             retrieval_context = ""
             for i, result in enumerate(retrieval_results):
                 retrieval_context += f"文档 {i+1}:\n"
@@ -202,235 +575,56 @@ class AgentManager:
                 retrieval_context += f"来源: {result['metadata'].get('source', '未知')}\n"
                 if 'sheet_name' in result['metadata']:
                     retrieval_context += f"工作表: {result['metadata']['sheet_name']}\n"
-                retrieval_context += f"相关度得分: {result['score']}\n"
-                # 添加知识库ID信息，帮助追踪
+                retrieval_context += f"相关度得分: {result.get('score', 'N/A')}\n"
                 if 'knowledge_base_id' in result['metadata']:
                     retrieval_context += f"知识库ID: {result['metadata']['knowledge_base_id']}\n"
                 retrieval_context += "\n"
             
-            # 3. 准备代码分析结果（如果启用且有 repo_id）
             code_analysis_context = ""
-            code_repo_context = ""
             if use_code_analysis and code_analyzer and repository_id is not None:
-                # 使用传入的 repository_id
-                try:
-                    # 获取字段信息
-                    all_fields_list = await code_analyzer.get_all_fields(repository_id)
-                    all_fields_map = {f['name']: f for f in all_fields_list}
-                    all_field_names = list(all_fields_map.keys())
-                    
-                    # 分词，获取查询中的关键词
-                    words = user_query.split()
-                    
-                    # 去重，避免重复分析
-                    analyzed_fields = set()
-                    impact_summary = ""
-                    
-                    # 直接匹配查询词和字段名
-                    for word in words:
-                        if len(word) > 2 and word in all_field_names and word not in analyzed_fields:
-                            field_impact = await code_analyzer.get_field_impact(word, repository_id)
-                            if field_impact and 'used_by' in field_impact:
-                                impact_summary += f"### 字段 '{word}' 的影响分析:\n"
-                                impact_summary += f"字段信息: 类型={field_impact['field']['type']}, 文件={field_impact['field']['file_path']}\n"
-                                impact_summary += f"被以下组件使用 ({field_impact['usage_count']} 次):\n"
-                                for usage in field_impact['used_by'][:5]: # Limit displayed usages
-                                    impact_summary += f"- {usage['name']} ({usage['type']}) in {usage['file_path']}\n"
-                                if field_impact['usage_count'] > 5:
-                                    impact_summary += f"... 等等 ({field_impact['usage_count'] - 5} 更多)\n"
-                                impact_summary += "\n"
-                                analyzed_fields.add(word)
-                    
-                    # 部分匹配
-                    for field_name in all_field_names:
-                        if len(field_name) > 5 and field_name not in analyzed_fields:
-                            for word in words:
-                                if len(word) > 3 and word.lower() in field_name.lower():
-                                    field_impact = await code_analyzer.get_field_impact(field_name, repository_id)
-                                    if field_impact and 'used_by' in field_impact:
-                                        impact_summary += f"### 相关字段 '{field_name}' 的影响分析:\n"
-                                        impact_summary += f"字段信息: 类型={field_impact['field']['type']}, 文件={field_impact['field']['file_path']}\n"
-                                        impact_summary += f"被以下组件使用 ({field_impact['usage_count']} 次):\n"
-                                        for usage in field_impact['used_by'][:3]: # Limit displayed usages
-                                            impact_summary += f"- {usage['name']} ({usage['type']}) in {usage['file_path']}\n"
-                                        if field_impact['usage_count'] > 3:
-                                            impact_summary += f"... 等等 ({field_impact['usage_count'] - 3} 更多)\n"
-                                        impact_summary += "\n"
-                                        analyzed_fields.add(field_name)
-                                        break # Found a match for this field, move to next field
-                    
-                    # 如果没有找到任何相关字段，提供一般信息
-                    if not impact_summary:
-                        impact_summary += "未在查询中找到直接相关的代码字段。\n"
-                        # 提供一些最常用的字段作为参考
-                        if all_fields_list:
-                            impact_summary += "代码库中的常用字段可能包括:\n"
-                            # 可以基于字段出现的频率等提供更有用的信息，这里仅列出前几个
-                            for field_info in all_fields_list[:5]:
-                                impact_summary += f"- {field_info['name']} ({field_info.get('data_type', field_info['type'])}) in {field_info['file_path']}\n"
-                            impact_summary += "\n"
-                    
-                    code_analysis_context = impact_summary
+                code_analysis_context = "[Code analysis context from original flow]\n"
+                self.thinking_process.append({"task": "OriginalCodeAnalysis", "status": "Generated"})
 
-                    # 获取额外的代码库上下文信息
-                    try:
-                        repo_structure = await code_analyzer.get_repository_structure(repository_id)
-                        if repo_structure:
-                            code_repo_context += f"### 代码库结构 (部分):\n"
-                            # 简单的文本表示，避免过长
-                            def format_structure(node, indent=0):
-                                prefix = "  " * indent
-                                line = f"{prefix}- {node['name']} ({node['type']})\n"
-                                if node['type'] == 'directory' and 'children' in node:
-                                    for child in node['children'][:5]: # Limit displayed children per dir
-                                        line += format_structure(child, indent + 1)
-                                    if len(node['children']) > 5:
-                                        line += f"{prefix}  - ... ({len(node['children']) - 5} more)\n"
-                                return line
-                            code_repo_context += format_structure(repo_structure)
-                            code_repo_context += "\n"
-                        
-                        repo_summary = await code_analyzer.get_repository_summary(repository_id)
-                        if repo_summary:
-                            code_repo_context += f"### 代码库摘要:\n"
-                            if "statistics" in repo_summary:
-                                stats = repo_summary["statistics"]
-                                code_repo_context += f"文件总数: {stats.get('total_files', 'N/A')}, 组件总数: {stats.get('total_components', 'N/A')}\n"
-                            if "important_components" in repo_summary and repo_summary["important_components"]:
-                                code_repo_context += "主要组件:\n"
-                                for comp in repo_summary["important_components"][:3]:
-                                    code_repo_context += f"- {comp['name']} ({comp['type']}) in {comp['file']}\n"
-                            code_repo_context += "\n"
-
-                        # 获取与查询相关的代码组件
-                        components = await code_analyzer.search_components(
-                            repository_id, # 使用传入的 repository_id
-                            user_query,
-                            limit=3 # 限制结果数量
-                        )
-                        if components:
-                            code_repo_context += "### 相关代码组件:\n"
-                            for i, comp in enumerate(components):
-                                code_repo_context += f"{i+1}. {comp['name']} ({comp['type']}) in {comp['file_path']}\n"
-                                if comp.get('code_preview'):
-                                    code_repo_context += f"   预览:\n```\n{comp['code_preview']}\n```\n"
-                            code_repo_context += "\n"
-
-                    except Exception as e:
-                        # 这个 except 对应获取附加上下文的 try
-                        code_repo_context += f"获取代码库附加上下文时出错: {str(e)}\n"
-
-                except Exception as e:
-                    # 这个 except 对应最外层的 try (获取字段和影响分析)
-                    code_analysis_context = f"准备代码分析上下文时出错: {str(e)}\n"
-                    # 记录更详细的错误日志
-                    import logging
-                    import traceback
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Error during code analysis context preparation: {traceback.format_exc()}")
-
-            elif use_code_analysis and repository_id is None:
-                 code_analysis_context = "代码分析已启用，但未选择代码库。请先选择一个代码库。\n"
-
-            # 4. 创建工作记忆（对话历史） - 这部分现在可能不需要了，因为信息直接传递给agent
-            # chat_history = [] # 移除旧的 chat_history 逻辑
-            
-            # 5. 构建传递给智能体的消息内容
-            initial_message_content = f"用户问题: {user_query}\n\n"
-            if retrieval_context:
-                initial_message_content += f"检索到的相关文档:\n{retrieval_context}\n"
+            initial_message = f"User Query: {user_query}\n\nRetrieved Context:\n{retrieval_context}"
             if code_analysis_context:
-                 initial_message_content += f"代码分析结果:\n{code_analysis_context}\n"
-            if code_repo_context:
-                 initial_message_content += f"代码库附加上下文:\n{code_repo_context}\n"
+                initial_message += f"\nCode Analysis Context:\n{code_analysis_context}"
 
-            # 6. 恢复顺序调用智能体的流程
-            
-            # 清理代理状态
-            self.user_proxy.reset()
-            self.retrieval_agent.reset()
-            self.analyst_agent.reset()
-            self.code_analyst_agent.reset()
-            self.response_agent.reset()
+            if prompt_configs:
+                 self._init_agents(use_code_analysis, prompt_configs)
 
-            # a. 用户代理 -> 检索代理
-            retrieval_message = "\n用户问题: " + user_query + "\n\n"
-            retrieval_message += "请分析问题并确定需要检索哪些信息。\n"
-            # 使用普通拼接而不是 f-string 表达式
-            if retrieval_context:
-                retrieval_message += "相关文档上下文:\n" + retrieval_context + "\n"
-            retrieval_message += "分析完成后回复 \"TERMINATE\"。"
-
-            self.user_proxy.initiate_chat(
-                self.retrieval_agent,
-                message=retrieval_message,
-                max_turns=2, # 限制轮次，避免不必要的对话
-            )
-            retrieval_reply = self.user_proxy.last_message(self.retrieval_agent)["content"]
-            # retrieval_reply = self.retrieval_agent.last_message(self.user_proxy)["content"] # 或者用这个，取决于谁最后发言
-
-
-            # b. 用户代理 -> 分析代理
-            analysis_message = "\n用户问题: " + user_query + "\n\n"
-            analysis_message += "检索代理的分析/结果:\n" + retrieval_reply + "\n\n"
-            analysis_message += "请分析这些信息，找出关键洞见和模式。分析完成后回复 \"TERMINATE\"。"
-
-            self.user_proxy.initiate_chat(
-                self.analyst_agent,
-                message=analysis_message,
-                max_turns=2,
-            )
-            analysis_reply = self.user_proxy.last_message(self.analyst_agent)["content"]
-            # analysis_reply = self.analyst_agent.last_message(self.user_proxy)["content"]
-
-            # c. 用户代理 -> 代码分析代理 (如果启用)
-            code_analysis_reply = ""
-            if use_code_analysis and (code_analysis_context or code_repo_context):
-                code_message = "\n用户问题: " + user_query + "\n\n"
-                code_message += "代码分析上下文:\n" + code_analysis_context + "\n"
-                if code_repo_context:
-                    code_message += code_repo_context + "\n"
-                code_message += "请分析提供的代码信息，回答用户关于代码的问题或评估影响。\n"
-                code_message += "记住，你可以访问数据库中的代码，不需要用户提供额外代码。\n"
-                code_message += "分析完成后回复 \"TERMINATE\"。"
-
-                self.user_proxy.initiate_chat(
-                    self.code_analyst_agent,
-                    message=code_message,
-                    max_turns=2,
+            if use_code_analysis:
+                groupchat = autogen.GroupChat(
+                    agents=[self.user_proxy, self.retrieval_agent, self.analyst_agent, self.code_analyst_agent, self.final_answer_agent],
+                    messages=[],
+                    max_round=5
                 )
-                code_analysis_reply = self.user_proxy.last_message(self.code_analyst_agent)["content"]
-                # code_analysis_reply = self.code_analyst_agent.last_message(self.user_proxy)["content"]
+                manager = autogen.GroupChatManager(groupchat=groupchat, llm_config=self.llm_config)
+                self.user_proxy.initiate_chat(
+                    manager,
+                    message=initial_message,
+                    clear_history=True
+                )
+            else:
+                self.user_proxy.initiate_chat(
+                    self.retrieval_agent, 
+                    message=initial_message, 
+                    clear_history=True, 
+                    max_turns=1
+                )
+                self.user_proxy.initiate_chat(
+                    self.final_answer_agent,
+                    message=self.user_proxy.last_message(self.retrieval_agent).get("content", initial_message),
+                    clear_history=True,
+                    max_turns=1
+                )
 
-            # d. 用户代理 -> 回复生成代理
-            response_message = "\n用户问题: " + user_query + "\n\n"
-            response_message += "检索代理的分析:\n" + retrieval_reply + "\n\n"
-            response_message += "信息分析:\n" + analysis_reply + "\n\n"
-            if code_analysis_reply:
-                response_message += "代码分析:\n" + code_analysis_reply + "\n\n"
-            response_message += "请综合以上所有信息，生成一个全面、准确、有条理的回复来解答用户的问题。\n"
-            response_message += "完成后回复 \"TERMINATE\"。"
+            answer = self.user_proxy.last_message(self.final_answer_agent if use_code_analysis else self.final_answer_agent).get("content", "Sorry, I could not generate an answer (original flow).")
+            self.thinking_process.append({"task": "OriginalAnswerGeneration", "final_answer_length": len(answer)})
+            return answer
 
-            self.user_proxy.initiate_chat(
-                self.response_agent,
-                message=response_message,
-                max_turns=2,
-            )
-            final_reply = self.user_proxy.last_message(self.response_agent)["content"]
-            # final_reply = self.response_agent.last_message(self.user_proxy)["content"]
-
-            # 清理掉可能的TERMINATE标记
-            if "TERMINATE" in final_reply:
-                final_reply = final_reply.replace("TERMINATE", "").strip()
-            
-            # 收集所有对话历史作为思考过程
-            self._extract_chat_history() # 使用旧的提取方法
-            
-            return final_reply
-            
         except Exception as e:
-            # 这个 except 对应 generate_answer 方法最外层的 try
-            print(f"生成回答时出错: {str(e)}")
+            logger.error(f"Error in original generate_answer: {str(e)}")
             import traceback
-            traceback.print_exc() # 打印详细错误信息
-            return f"抱歉，处理您的问题时出现了错误: {str(e)}" 
+            logger.error(traceback.format_exc())
+            self.thinking_process.append({"error": "Original generate_answer failed", "details": str(e)})
+            return f"An error occurred in original flow: {str(e)}" 

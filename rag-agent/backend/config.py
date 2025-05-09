@@ -87,4 +87,50 @@ AGENT_PROMPTS = {
 4. 保持回复的信息准确性和相关性
 请使用清晰、简洁的语言，避免不必要的技术术语，除非它对于回答问题是必要的。
 回复应当有条理，易于理解，同时提供充分的信息深度。"""
-} 
+}
+
+# ==============================================================================
+# TagRAG and T-CUS Configuration
+# ==============================================================================
+
+# T-CUS (Tag-aware Context Utility Score) weights
+T_CUS_ALPHA = 0.4  # Weight for TagSim(T(q), T(p_i))
+T_CUS_BETA = 0.4   # Weight for E(q, p_i) (Embedding Similarity)
+T_CUS_GAMMA = 0.2  # Weight for W(p_i) (Structural Weight)
+
+# Structural Weights W(p_i) - Mapping from structural_type to weight
+# These types will need to be populated in chunk metadata during document processing
+STRUCTURAL_WEIGHTS = {
+    "title_l1": 1.0,       # e.g., Main document title
+    "title_l2": 0.9,       # e.g., Chapter title
+    "title_l3": 0.8,       # e.g., Section title
+    "author_comment": 0.7, # Special comments if identifiable
+    "code_block": 0.6,     # Code examples
+    "list_item": 0.5,
+    "table_cell": 0.5,
+    "paragraph": 0.4,      # Default for general text
+    "footnote": 0.2,
+    "header": 0.1,
+    "footer": 0.1,
+    "unknown": 0.3         # Default for unclassified structural types
+}
+
+# Placeholder for Tag Similarity (TagSim) specific configurations
+# This might include weights for different tag relationships (parent, child, depends_on)
+TAG_SIMILARITY_CONFIG = {
+    "jaccard_weight": 1.0,
+    "parent_child_bonus": 0.2, # Bonus if query tag is parent/child of chunk tag
+    "dependency_bonus": 0.3    # Bonus if tags have a dependency relationship
+    # Add more specific configurations as TagSim evolves
+}
+
+# Context Token Limit for the final prompt assembly
+CONTEXT_TOKEN_LIMIT = 3000
+
+# Maximum number of candidate chunks to retrieve from TagFilterAgent before T-CUS scoring
+TAG_FILTER_RETRIEVAL_K = 20
+
+# Default embedding model for T-CUS semantic similarity E(q,p) if not tied to vector_store's
+# Usually, it's best to use the same model as the vector store.
+# This is more of a placeholder if a separate calculation is needed.
+T_CUS_EMBEDDING_MODEL = EMBEDDING_MODEL # Defaults to the one used by VectorStore 

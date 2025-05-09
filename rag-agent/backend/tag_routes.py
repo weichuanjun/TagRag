@@ -147,22 +147,101 @@ async def delete_tag(
     tag_id: int,
     db: Session = Depends(get_db)
 ):
-    """删除标签"""
+    """删除标签，并处理其在文档和块中的关联"""
     try:
         tag = db.query(Tag).filter(Tag.id == tag_id).first()
         if not tag:
             raise HTTPException(status_code=404, detail=f"标签ID {tag_id} 不存在")
+
+        # 1. 从 document_tags 中删除关联
+        # SQLAlchemy Table object does not have a direct 'delete' method that works like ORM delete.
+        # We need to execute a delete statement.
+        stmt_doc_tags = document_tags.delete().where(document_tags.c.tag_id == tag_id)
+        db.execute(stmt_doc_tags)
+        logger.info(f"已从 document_tags 中为 tag_id {tag_id} 删除关联")
+
+        # 2. 从 document_chunk_tags 中删除关联
+        stmt_chunk_tags = document_chunk_tags.delete().where(document_chunk_tags.c.tag_id == tag_id)
+        db.execute(stmt_chunk_tags)
+        logger.info(f"已从 document_chunk_tags 中为 tag_id {tag_id} 删除关联")
         
-        # 删除标签
+        # 3. 删除标签自身
         db.delete(tag)
+        
         db.commit()
         
-        return {"success": True, "message": f"标签 '{tag.name}' 已删除"}
+        return {"success": True, "message": f"标签 '{tag.name}' 及其所有关联已删除"}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"删除标签失败: {str(e)}")
+        db.rollback()
+        logger.error(f"删除标签 {tag_id} 失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"删除标签失败: {str(e)}")
+
+# New internal helper function
+async def _try_delete_orphaned_tag_after_document_removal(tag_id: int, db: Session):
+    """
+    尝试删除一个可能已成为孤立的标签。
+    在文档被删除后，为其之前关联的每个标签调用此函数。
+    """
+    logger.info(f"检查标签ID {tag_id} 是否已成为孤立标签...")
+    try:
+        # 检查该标签是否还关联其他任何文档
+        remaining_associations = db.query(document_tags).filter(document_tags.c.tag_id == tag_id).first()
+        
+        if remaining_associations:
+            logger.info(f"标签ID {tag_id} 仍与其他文档关联，不删除。")
+            return False # Not orphaned, not deleted
+        else:
+            logger.info(f"标签ID {tag_id} 已成为孤立标签，准备删除...")
+            # 注意：delete_tag 是一个 FastAPI 路由操作函数，它期望 db 来自 Depends(get_db)。
+            # 为了在内部调用它，我们需要确保它能接受一个 db session。
+            # 当前的 delete_tag 定义是 async def delete_tag(tag_id: int, db: Session = Depends(get_db))
+            # 这里的 db 参数可以直接传递。
+
+            # 调用 delete_tag 来处理实际的删除逻辑 (包括从 chunk_tags 和 tags 表删除)
+            # 因为 delete_tag 本身会 commit 或 rollback, 我们不需要在这里处理事务。
+            # delete_tag 还会处理 HTTPException，这里可以捕获它或者让它冒泡。
+            try:
+                # We need to call delete_tag by passing the db session directly.
+                # The Depends(get_db) in its signature is for FastAPI when called as an endpoint.
+                # For an internal call, we provide the db session.
+                
+                # Since delete_tag is already an async function, we await it.
+                # We need to simulate the dependency injection or ensure delete_tag can be called directly.
+                # The current signature of delete_tag should allow direct call if db is provided.
+                
+                # Re-fetch tag for its name for the log message, as delete_tag expects it
+                tag_to_delete = db.query(Tag).filter(Tag.id == tag_id).first()
+                if not tag_to_delete:
+                    logger.warning(f"尝试删除孤立标签时，标签ID {tag_id} 未找到 (可能已被并发操作删除)。")
+                    return False # Tag was not found, so effectively not "deleted by this call"
+
+                delete_response = await delete_tag(tag_id=tag_id, db=db) # Pass db session directly
+                
+                if delete_response.get("success"):
+                    logger.info(f"孤立标签ID {tag_id} (名称: '{tag_to_delete.name}') 已成功删除。")
+                    return True # Deleted
+                else:
+                    # This case might occur if delete_tag itself raises an HTTPException that gets caught by its own try-except
+                    # or returns success: False.
+                    logger.error(f"调用 delete_tag 删除孤立标签ID {tag_id} 失败，但未抛出异常。响应: {delete_response}")
+                    return False # Not deleted due to internal issue in delete_tag
+
+            except HTTPException as http_exc:
+                # If delete_tag raises an HTTPException, log it and consider the tag not deleted by this attempt.
+                logger.error(f"删除孤立标签ID {tag_id} 时 delete_tag 内部发生HTTPException: {http_exc.detail}")
+                return False # Not deleted
+            except Exception as e_inner_delete:
+                # Catch any other unexpected error from delete_tag
+                logger.error(f"调用 delete_tag 删除孤立标签ID {tag_id} 时发生意外错误: {e_inner_delete}", exc_info=True)
+                # db.rollback() # delete_tag should handle its own rollback on error
+                return False # Not deleted
+
+    except Exception as e:
+        logger.error(f"检查或删除孤立标签ID {tag_id} 时发生外部错误: {e}", exc_info=True)
+        # db.rollback() # Rollback any changes if the check itself failed. delete_tag handles its own.
+        return False # Not deleted
 
 @router.get("/tags/document/{document_id}")
 async def get_document_tags(

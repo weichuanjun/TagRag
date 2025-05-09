@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy import create_engine
 import datetime
 import os
+from sqlalchemy import event # For custom event listeners if needed later
 
 # 创建数据库目录
 os.makedirs("data/db", exist_ok=True)
@@ -160,17 +161,49 @@ class Tag(Base):
     __tablename__ = "tags"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, index=True)
-    color = Column(String, default="#1890ff")  # 标签颜色
+    name = Column(String, nullable=False, index=True, unique=True) # Ensure tag names are unique
+    color = Column(String, default="#1890ff")
     description = Column(String, nullable=True)
-    tag_type = Column(String, default="general")  # 标签类型：API、字段、功能、技术、文档类型等
-    importance = Column(Float, default=0.5)  # 重要性评分
-    related_content = Column(Text, nullable=True)  # 与标签相关的原始内容
-    parent_id = Column(Integer, ForeignKey("tags.id", ondelete="SET NULL"), nullable=True)  # 支持标签层级
+    tag_type = Column(String, default="general") 
+    importance = Column(Float, default=0.5)
+    related_content = Column(Text, nullable=True)
+    parent_id = Column(Integer, ForeignKey("tags.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.now)
     
-    # 关联关系
     parent = relationship("Tag", remote_side=[id], backref="children")
+    
+    # Relationships for TagDependency
+    # Tags that this tag depends on (A depends on B, B is a dependency_of A)
+    dependencies = relationship(
+        "TagDependency", 
+        foreign_keys="TagDependency.source_tag_id", 
+        back_populates="source_tag",
+        cascade="all, delete-orphan"
+    )
+    # Tags that depend on this tag (B is depended_on_by A, A is a dependent_on B)
+    dependents = relationship(
+        "TagDependency", 
+        foreign_keys="TagDependency.target_tag_id", 
+        back_populates="target_tag",
+        cascade="all, delete-orphan"
+    )
+
+# New TagDependency model
+class TagDependency(Base):
+    __tablename__ = "tag_dependencies"
+    id = Column(Integer, primary_key=True, index=True)
+    # The tag that has a dependency
+    source_tag_id = Column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True)
+    # The tag that is depended upon
+    target_tag_id = Column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Type of dependency, e.g., "REQUIRES", "RELATES_TO", "PART_OF", "CONFLICTS_WITH"
+    relationship_type = Column(String, nullable=False, default="RELATES_TO") 
+    weight = Column(Float, default=0.5) # Strength or importance of the dependency
+    description = Column(String, nullable=True) # Optional description of the dependency
+    created_at = Column(DateTime, default=datetime.datetime.now)
+
+    source_tag = relationship("Tag", foreign_keys=[source_tag_id], back_populates="dependencies")
+    target_tag = relationship("Tag", foreign_keys=[target_tag_id], back_populates="dependents")
 
 # 文档-标签关联表
 document_tags = Table(
@@ -193,10 +226,13 @@ class Document(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     path = Column(String, nullable=False, index=True)
-    source = Column(String, nullable=True)
+    source = Column(String, nullable=True) # Original filename or source identifier
     document_type = Column(String, nullable=True)
     chunks_count = Column(Integer, default=0)
     added_at = Column(DateTime, default=datetime.datetime.now)
+    processed_at = Column(DateTime, nullable=True) # Time when processing finished or failed
+    status = Column(String, default="pending") # e.g., pending, processing, processed, error_loading, error_processing, error_vector_store
+    error_message = Column(Text, nullable=True) # Store error messages if processing fails
     
     # 添加知识库外键
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True)
@@ -218,12 +254,16 @@ class DocumentChunk(Base):
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"))
     content = Column(Text)
     chunk_index = Column(Integer)
-    chunk_metadata = Column(Text)  # JSON格式的元数据，改名避免与SQLAlchemy保留字冲突
+    
+    # Dedicated columns for T-CUS relevant fields
+    token_count = Column(Integer, nullable=True)
+    structural_type = Column(String(100), nullable=True) # Max length for structural type string
+    
+    chunk_metadata = Column(Text) # JSON format for other, less queried metadata
     page = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.now)
-    summary = Column(Text, nullable=True)  # AI生成的摘要
+    summary = Column(Text, nullable=True)
     
-    # 关系
     document = relationship("Document", back_populates="chunks")
     tags = relationship("Tag", secondary=document_chunk_tags, backref="chunks")
 
