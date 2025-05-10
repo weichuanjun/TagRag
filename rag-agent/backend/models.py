@@ -170,7 +170,14 @@ class Tag(Base):
     parent_id = Column(Integer, ForeignKey("tags.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.now)
     
-    parent = relationship("Tag", remote_side=[id], backref="children")
+    # 添加标签层级类型，用于区分一级、二级、三级标签
+    hierarchy_level = Column(String, default="leaf")  # root(根标签), branch(分支标签), leaf(叶标签)
+    # 是否为固定/系统预设标签
+    is_system = Column(Boolean, default=False)
+    
+    # 关系定义
+    parent = relationship("Tag", remote_side=[id], back_populates="children")
+    children = relationship("Tag", back_populates="parent", remote_side=[parent_id])
     
     # Relationships for TagDependency
     # Tags that this tag depends on (A depends on B, B is a dependency_of A)
