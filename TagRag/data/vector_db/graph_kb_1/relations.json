@@ -1,0 +1,1311 @@
+[
+  {
+    "source": "doc_1_0",
+    "target": "kw_主处理逻辑_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_的准确性和错_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_进行测试_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_Webhook_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_测试式样书_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_测试的目的是_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_同时覆盖各种_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_外部依赖_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_集成测试_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_0",
+    "target": "kw_测试框架_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_确保测试结果_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_6.1._1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_数据驱动_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_测试框架_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_测试策略_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_region_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_测试环境与工_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_unittest_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_usage_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_1",
+    "target": "kw_对所有外部服_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_2",
+    "target": "kw_测试用例_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_2",
+    "target": "kw_测试步骤_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_2",
+    "target": "kw_前置条件_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_2",
+    "target": "kw_预期结果_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_成功获取指定_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_返回一个字典_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_northeast_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_region_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_2023_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_东京时区_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_datetime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_currency_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_的每日费用数_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_4",
+    "target": "kw_区域的当月累_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_ResultsByTime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_零费用数据_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_返回一个字典_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_northeast_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_或金额为_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_datetime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_currency_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_返回一个空的_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_的条目_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_5",
+    "target": "kw_monthly_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_调用失败_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_ClientError_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_例如权限问题_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_datetime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_或其他_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_northeast_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_函数应捕获异_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_抛出异常_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_003_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_6",
+    "target": "kw_usage_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_日之前的数据_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_无效日期_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_昨日是上个月_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_northeast_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_当前日期为某_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_2023_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_最后一天或无_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_datetime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_昨日无数据_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_7",
+    "target": "kw_因为只计算到_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_region_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_datetime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_数一致_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_返回不同数据_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_验证其_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_配置为可返回_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_使用不同的_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_参数调用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_使其根据传入_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_8",
+    "target": "kw_Explorer_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_9",
+    "target": "kw_message_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_9",
+    "target": "kw_6.2._1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_10",
+    "target": "kw_测试用例_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_10",
+    "target": "kw_测试步骤_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_10",
+    "target": "kw_前置条件_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_10",
+    "target": "kw_预期结果_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_发送到_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_Timeout_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_200_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_Webhook_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_message_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_有效且服务可_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_并重新抛出该_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_记录错误日志_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_服务响应慢或_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_11",
+    "target": "kw_被以正确的_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_Webhook_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_message_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_或其子类如_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_并重新抛出该_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_并设置_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_记录错误日志_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_500_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_式错误等_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_无效或请求格_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_12",
+    "target": "kw_HTTPError_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_13",
+    "target": "kw_集成测试案例_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_13",
+    "target": "kw_handler_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_13",
+    "target": "kw_lambda_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_14",
+    "target": "kw_测试用例_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_14",
+    "target": "kw_测试步骤_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_14",
+    "target": "kw_前置条件_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_14",
+    "target": "kw_预期结果_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_200_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_message_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_northeast_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_成功获取费用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_不抛异常_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_化中的时间戳_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_成功返回费用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_datetime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_返回模拟的成_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_18",
+    "target": "kw_返回一个值_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_message_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_错误被记录到_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_fetch_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_通常不会被调_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_500_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_函数返回_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_发送失败_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_dumps_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_未被调用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_20",
+    "target": "kw_Exception_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_Timeout_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_message_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_timeout_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_错误被记录到_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_成功返回费用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_500_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_datetime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_返回模拟的成_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_函数返回_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_22",
+    "target": "kw_发送失败_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_并且相关信息_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_event_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_当前主要关注_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_函数执行过程_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_使其成功_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_对象未被使用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_Lambda_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_可调用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_被调用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_24",
+    "target": "kw_millis_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_message_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_确性验证_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_并捕获传递给_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_返回特定数据_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_时区信息正确_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_datetime_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_返回一组固定_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_字符串符合预_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_期的格式_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_26",
+    "target": "kw_金额保留两位_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_并产生有意义_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_验证日志级别_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_event_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_WEBHOOK_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_测试从_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_但文档建议使_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_参数指定时间_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_未来扩展测试_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_region_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_1_28",
+    "target": "kw_配置管理_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_基本设计文档_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_函数的权限_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_Webhook_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_是核心处理单_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_式化为易读的_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_每日成本监控_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_每天特定时间_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_EventBridge_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_CloudWatch_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_0",
+    "target": "kw_角色控制_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_自定义通知渠_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_该函数通常打_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_event_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_message_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_Webhook_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_package_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_或添加新的通_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_域的费用_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_region_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  },
+  {
+    "source": "doc_2_1",
+    "target": "kw_其他消息平台_1",
+    "type": "CONTAINS",
+    "strength": 1.0,
+    "knowledge_base_id": 1
+  }
+]
