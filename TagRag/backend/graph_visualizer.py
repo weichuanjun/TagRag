@@ -95,22 +95,40 @@ async def get_tag_types(knowledge_base_id: int, db: Session = Depends(get_db)):
         
         # 查询与该知识库相关的文档
         documents = kb.documents
+        document_ids = [doc.id for doc in documents]
         
-        # 收集所有标签
-        all_tags = []
-        for doc in documents:
-            for tag in doc.tags:
-                if tag not in all_tags:
-                    all_tags.append(tag)
+        if not document_ids:
+            logger.info(f"知识库 {knowledge_base_id} 没有关联的文档")
+            return {"tag_types": []}
+        
+        # 使用文档IDs直接从关联表查询相关标签
+        from sqlalchemy import text
+        
+        # 使用SQL查询获取与这些文档关联的所有标签ID
+        tag_ids_query = f"""
+            SELECT DISTINCT tag_id 
+            FROM document_tags 
+            WHERE document_id IN ({','.join(str(id) for id in document_ids)})
+        """
+        result = db.execute(text(tag_ids_query))
+        tag_ids = [row[0] for row in result]
+        
+        if not tag_ids:
+            logger.info(f"知识库 {knowledge_base_id} 的文档没有关联的标签")
+            return {"tag_types": []}
+            
+        # 查询这些标签的类型
+        tags = db.query(Tag).filter(Tag.id.in_(tag_ids)).all()
         
         # 提取不同的标签类型
         tag_types = set()
-        for tag in all_tags:
+        for tag in tags:
             if tag.tag_type:
                 tag_types.add(tag.tag_type)
         
         # 按字母顺序排序
         sorted_types = sorted(list(tag_types))
+        logger.info(f"知识库 {knowledge_base_id} 的标签类型: {sorted_types}")
         
         return {"tag_types": sorted_types}
     except Exception as e:

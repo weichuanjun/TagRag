@@ -190,9 +190,8 @@ class VectorStore:
             ids = []
             final_metadatas_for_chroma = []
             for i, doc_lc in enumerate(processed_documents_lc):
-                logger.debug(f"VectorStore DBG: Processing doc_lc at index {i}, type: {type(doc_lc)}")
                 if not isinstance(doc_lc, Document):
-                    logger.warning(f"VectorStore DBG: Item at index {i} is not a Document object, it is {type(doc_lc)}. Skipping.")
+                    logger.warning(f"Item at index {i} is not a Document object, it is {type(doc_lc)}. Skipping.")
                     continue
 
                 original_meta = doc_lc.metadata if doc_lc.metadata else {}
@@ -205,19 +204,8 @@ class VectorStore:
                 for k, v in original_meta.items():
                     if isinstance(v, (str, int, float, bool)) or v is None: # ChromaDB allows None for scalar types
                         manually_cleaned_meta[k] = v
-                    # elif isinstance(v, list): # We no longer expect 'tag_ids' as a list here due to flattening in DocumentProcessor
-                        # logger.debug(f"VectorStore DBG: Removing list value for key '{k}' during manual cleaning: {v}")
-                        # pass 
-                
-                # The explicit deletion of 'tag_ids' (list) is no longer needed here 
-                # as DocumentProcessor should now provide flattened tags (e.g., tag_123: True)
-                # if 'tag_ids' in manually_cleaned_meta and isinstance(manually_cleaned_meta['tag_ids'], list):
-                #     logger.warning(f"VectorStore DBG: Manually removing 'tag_ids' (list) from metadata for chunk {ids[-1]} to test add_texts.")
-                #     del manually_cleaned_meta['tag_ids']
                 
                 final_metadatas_for_chroma.append(manually_cleaned_meta)
-                logger.debug(f"VectorStore DBG: Original metadata (from DocumentProcessor) for chunk {ids[-1]}: {original_meta}")
-                logger.info(f"VectorStore DBG: Metadata passed to Chroma for chunk {ids[-1]}: {manually_cleaned_meta}")
 
             if not hasattr(self, 'langchain_chroma') or self.langchain_chroma is None:
                 logger.error("LangChain Chroma instance is not initialized.")
@@ -339,10 +327,52 @@ class VectorStore:
                 temp_vector_store = VectorStore(knowledge_base_id=knowledge_base_id)
                 return await temp_vector_store.search(query, k, knowledge_base_id, metadata_filter)
             
-            # 记录详细的搜索参数，包括当前集合名称和过滤器
-            logger.info(f"[SEARCH_DEBUG] 主要搜索参数: query='{query[:50]}...', k={k}, collection_name='{self.collection_name}'")
-            logger.info(f"[SEARCH_DEBUG] 元数据: repo_id={self.repository_id}, kb_id={self.knowledge_base_id}")
-            logger.info(f"[SEARCH_DEBUG] 过滤器: {metadata_filter}")
+            logger.info(f"执行搜索: query='{query[:50]}...', k={k}, collection='{self.collection_name}'")
+            
+            # 预处理标签过滤器，改为OR逻辑
+            final_filter = None
+            if metadata_filter:
+                # 检查是否是标签过滤器（form: {"tag_X": True, "tag_Y": True}）
+                tag_filters = [k for k in metadata_filter.keys() if k.startswith("tag_")]
+                
+                if tag_filters:
+                    # 使用OR条件将多个标签过滤器组合
+                    or_conditions = []
+                    for tag_key in tag_filters:
+                        or_conditions.append({tag_key: metadata_filter[tag_key]})
+                    
+                    # 转换为ChromaDB支持的$or格式
+                    if len(or_conditions) > 1:
+                        final_filter = {"$or": or_conditions}
+                    else:
+                        final_filter = or_conditions[0]
+                    
+                    logger.info(f"使用标签过滤器: {final_filter}")
+                else:
+                    # 非标签过滤器，直接使用
+                    final_filter = metadata_filter
+                    logger.info(f"使用非标签过滤器: {final_filter}")
+            
+            # 如果设置了知识库ID，确保在过滤条件中
+            if self.knowledge_base_id is not None:
+                kb_filter = {"knowledge_base_id": self.knowledge_base_id}
+                
+                if final_filter:
+                    # 结合标签条件和知识库条件
+                    # 简单版本：将标签条件视为一个整体，与知识库条件做AND
+                    if "$or" in final_filter:
+                        # 复杂情况：使用$and组合$or和kb_filter
+                        combined_filter = {"$and": [{"$or": final_filter["$or"]}, kb_filter]}
+                    else:
+                        # 简单情况：直接合并两个字典
+                        combined_filter = final_filter.copy()
+                        combined_filter.update(kb_filter)
+                    
+                    final_filter = combined_filter
+                else:
+                    final_filter = kb_filter
+                
+                logger.info(f"添加知识库过滤条件后的最终过滤器: {final_filter}")
             
             # 定义一个内部函数来执行实际的搜索，以便重用代码
             async def _execute_search_in_collection(langchain_chroma_instance, log_prefix=""):
@@ -352,15 +382,15 @@ class VectorStore:
                         results = langchain_chroma_instance.similarity_search_with_score(
                             query,
                             k=k,
-                            filter=metadata_filter
+                            filter=final_filter
                         )
-                    elif metadata_filter:  # 仅基于过滤器的搜索
+                    elif final_filter:  # 仅基于过滤器的搜索
                         logger.info(f"{log_prefix} 执行基于过滤器的搜索 (无查询)")
                         dummy_query = " "
                         results = langchain_chroma_instance.similarity_search_with_score(
                             dummy_query,
                             k=k,
-                            filter=metadata_filter
+                            filter=final_filter
                         )
                     else:  # 无查询和无过滤器
                         logger.warning(f"{log_prefix} 搜索既无查询又无过滤器")
@@ -382,82 +412,35 @@ class VectorStore:
                             doc_metadata = doc.metadata
                         elif isinstance(doc, dict) and 'metadata' in doc and doc['metadata'] is not None:
                             doc_metadata = doc['metadata']
-
+                        
+                        # 收集文档中的标签键
+                        tag_keys = [k for k in doc_metadata.keys() if k.startswith("tag_")]
+                        
                         processed_results.append({
                             "text": doc_content,
                             "metadata": doc_metadata,
-                            "score": score
+                            "score": score,
+                            "tag_keys": tag_keys  # 添加标签键列表，方便调试
                         })
                     
                     if processed_results:
                         logger.info(f"{log_prefix} 成功处理 {len(processed_results)} 个结果")
-                        first_res = processed_results[0]
-                        logger.info(f"{log_prefix} 首个结果内容预览: {repr(first_res.get('text','')[:100])}")
                     else:
                         logger.info(f"{log_prefix} 没有处理出有效结果")
                     
                     return processed_results
+                
                 except Exception as e:
-                    logger.error(f"{log_prefix} 搜索出错: {e}", exc_info=True)
+                    logger.error(f"{log_prefix} 执行搜索时出错: {str(e)}", exc_info=True)
                     return []
             
-            # 第1步: 在当前集合中搜索 (基于 knowledge_base_id 或 repository_id)
-            logger.info(f"[SEARCH_STRATEGY] 步骤1: 在当前集合 '{self.collection_name}' 中搜索")
+            # 执行搜索
+            logger.info(f"在集合 '{self.collection_name}' 中搜索")
             current_results = await _execute_search_in_collection(self.langchain_chroma, "[当前集合]")
             
-            if current_results:
-                logger.info(f"[SEARCH_STRATEGY] 在当前集合中找到 {len(current_results)} 个结果，返回结果")
-                return current_results
-            
-            # 第2步: 尝试在旧格式集合中搜索 (如果使用 knowledge_base_id 且有 repository_id)
-            if self.knowledge_base_id is not None and self.repository_id is not None:
-                old_collection_name = f"repo_{self.repository_id}"
-                logger.info(f"[SEARCH_STRATEGY] 步骤2: 在旧格式集合 '{old_collection_name}' 中搜索")
-                
-                try:
-                    # 创建临时 VectorStore 实例，仅使用 repository_id
-                    legacy_vector_store = VectorStore(repository_id=self.repository_id)
-                    
-                    # 在旧集合中搜索
-                    legacy_results = await _execute_search_in_collection(
-                        legacy_vector_store.langchain_chroma, 
-                        f"[旧集合:{old_collection_name}]"
-                    )
-                    
-                    if legacy_results:
-                        logger.info(f"[SEARCH_STRATEGY] 在旧格式集合中找到 {len(legacy_results)} 个结果，返回结果")
-                        return legacy_results
-                    else:
-                        logger.info("[SEARCH_STRATEGY] 在旧格式集合中没有找到结果")
-                except Exception as e:
-                    logger.error(f"[SEARCH_STRATEGY] 尝试旧格式集合时出错: {e}", exc_info=True)
-            
-            # 第3步: 尝试在默认集合中搜索
-            if self.collection_name != "default":
-                default_collection_name = "default"
-                logger.info(f"[SEARCH_STRATEGY] 步骤3: 在默认集合 '{default_collection_name}' 中搜索")
-                
-                try:
-                    # 创建临时 VectorStore 实例，使用默认集合
-                    default_vector_store = VectorStore()
-                    
-                    # 在默认集合中搜索
-                    default_results = await _execute_search_in_collection(
-                        default_vector_store.langchain_chroma, 
-                        f"[默认集合:{default_collection_name}]"
-                    )
-                    
-                    if default_results:
-                        logger.info(f"[SEARCH_STRATEGY] 在默认集合中找到 {len(default_results)} 个结果，返回结果")
-                        return default_results
-                    else:
-                        logger.info("[SEARCH_STRATEGY] 在默认集合中也没有找到结果")
-                except Exception as e:
-                    logger.error(f"[SEARCH_STRATEGY] 尝试默认集合时出错: {e}", exc_info=True)
-            
-            # 没有找到任何结果
-            logger.warning("[SEARCH_STRATEGY] 所有尝试都失败，没有找到任何结果")
-            return []
+            # 返回当前集合中的结果
+            logger.info(f"在当前集合中找到 {len(current_results)} 个结果，直接返回")
+            return current_results
             
         except Exception as e:
             logger.error(f"搜索过程中发生错误: {str(e)}")
@@ -532,3 +515,66 @@ class VectorStore:
         except Exception as e:
             logger.error(f"VECTOR_STORE: Error deleting chunks for document_id {document_id}: {e}", exc_info=True)
             return {"status": "error", "message": str(e)} 
+
+    async def get_all_documents(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """诊断功能：直接获取向量存储中的所有文档，以便检查存储状况
+        
+        Args:
+            limit: 最大返回文档数
+            
+        Returns:
+            List of documents with their metadata
+        """
+        try:
+            if not hasattr(self, 'collection') or self.collection is None:
+                logger.error(f"Collection '{self.collection_name}' not initialized")
+                return []
+                
+            logger.info(f"尝试获取集合 '{self.collection_name}' 中的所有文档 (限制 {limit} 条)")
+            
+            # 直接从ChromaDB获取所有文档 (无过滤器)
+            try:
+                # 尝试使用 get_all 方法或类似方法获取所有文档
+                # 注意：不同版本的ChromaDB API可能有所不同
+                all_docs = self.collection.get(
+                    limit=limit,
+                    include=["metadatas", "documents", "embeddings"]
+                )
+                
+                if not all_docs:
+                    logger.info(f"集合 '{self.collection_name}' 中没有找到文档")
+                    return []
+                    
+                # 处理获取到的文档
+                results = []
+                ids = all_docs.get('ids', [])
+                metadatas = all_docs.get('metadatas', [])
+                documents = all_docs.get('documents', [])
+                
+                for i in range(min(len(ids), len(metadatas), len(documents))):
+                    doc_id = ids[i]
+                    metadata = metadatas[i] or {}
+                    content = documents[i] or ""
+                    
+                    # 检查标签格式
+                    tag_keys = [k for k in metadata.keys() if k.startswith("tag_")]
+                    
+                    results.append({
+                        "id": doc_id,
+                        "text": content[:200] + "..." if len(content) > 200 else content,
+                        "metadata": metadata,
+                        "tag_keys": tag_keys,
+                        "knowledge_base_id": metadata.get("knowledge_base_id"),
+                        "document_id": metadata.get("document_id")
+                    })
+                
+                logger.info(f"成功获取 {len(results)} 个文档从集合 '{self.collection_name}'")
+                return results
+                
+            except Exception as e:
+                logger.error(f"获取集合 '{self.collection_name}' 文档时出错: {e}", exc_info=True)
+                return []
+                
+        except Exception as e:
+            logger.error(f"执行get_all_documents时发生错误: {e}", exc_info=True)
+            return [] 

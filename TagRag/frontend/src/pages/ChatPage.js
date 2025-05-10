@@ -132,9 +132,18 @@ const ChatPage = () => {
     useEffect(() => {
         if (selectedKnowledgeBase) {
             fetchAgentPromptsForKnowledgeBase(selectedKnowledgeBase);
+
+            // 找出选中知识库的名称
+            const selectedKbName = knowledgeBases.find(kb => kb.id === selectedKnowledgeBase)?.name || 'Unknown';
+
+            // 使用非侵入式提示框而非系统消息
+            message.info(`已切换到知识库: ${selectedKbName}`);
+
+            console.log(`已切换到知识库ID: ${selectedKnowledgeBase}`);
         } else if (knowledgeBases.length > 0 && !selectedKnowledgeBase) {
             // Auto-select first KB if none selected and KBs are loaded
             setSelectedKnowledgeBase(knowledgeBases[0].id);
+            console.log(`自动选择第一个知识库: ${knowledgeBases[0].id}`);
         }
     }, [selectedKnowledgeBase, knowledgeBases]);
 

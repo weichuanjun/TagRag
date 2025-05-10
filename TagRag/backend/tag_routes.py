@@ -88,11 +88,56 @@ class LLMClient:
 llm_client = LLMClient()
 
 @router.get("/tags")
-async def get_all_tags(db: Session = Depends(get_db)):
-    """获取所有标签"""
+async def get_all_tags(
+    knowledge_base_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """获取所有标签，可选按知识库ID过滤"""
     try:
-        tags = db.query(Tag).all()
-        return {"tags": [{"id": tag.id, "name": tag.name, "color": tag.color, "description": tag.description, "parent_id": tag.parent_id} for tag in tags]}
+        query = db.query(Tag)
+        
+        # 如果指定了知识库ID，通过文档-标签关系过滤标签
+        if knowledge_base_id is not None:
+            # 首先获取该知识库下所有文档的ID
+            doc_ids = db.query(Document.id).filter(Document.knowledge_base_id == knowledge_base_id).all()
+            if not doc_ids:
+                # 如果知识库没有文档，返回空列表
+                return {"tags": []}
+                
+            # 将文档ID转换为列表
+            doc_id_list = [doc_id[0] for doc_id in doc_ids]
+            
+            # 通过document_tags关联表过滤，只返回与这些文档关联的标签
+            # 使用子查询找出与这些文档关联的标签ID
+            from sqlalchemy import text
+            tag_ids_query = f"""
+                SELECT DISTINCT tag_id 
+                FROM document_tags 
+                WHERE document_id IN ({','.join(str(id) for id in doc_id_list)})
+            """
+            result = db.execute(text(tag_ids_query))
+            tag_ids = [row[0] for row in result]
+            
+            if tag_ids:
+                # 如果找到关联标签，筛选这些标签
+                query = query.filter(Tag.id.in_(tag_ids))
+            else:
+                # 如果没有关联标签，返回空列表
+                return {"tags": []}
+        
+        # 执行查询并返回所有标签
+        tags = query.all()
+        return {"tags": [
+            {
+                "id": tag.id, 
+                "name": tag.name, 
+                "color": tag.color, 
+                "description": tag.description, 
+                "parent_id": tag.parent_id,
+                "hierarchy_level": tag.hierarchy_level,
+                "tag_type": tag.tag_type if hasattr(tag, 'tag_type') else "general"
+            } for tag in tags
+        ]}
     except Exception as e:
         logger.error(f"获取标签列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取标签列表失败: {str(e)}")
@@ -303,16 +348,67 @@ async def get_tag_hierarchy(db: Session = Depends(get_db)):
         logger.error(f"获取标签层次结构失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取标签层次结构失败: {str(e)}")
 
-@router.delete("/tags/{tag_id}")
-async def delete_tag(
+@router.get("/tags/{tag_id}/can-delete")
+async def can_delete_tag(
     tag_id: int,
     db: Session = Depends(get_db)
 ):
-    """删除标签，并处理其在文档和块中的关联"""
+    """检查标签是否可以安全删除（无关联文档且无子标签）"""
+    try:
+        # 检查标签是否存在
+        tag = db.query(Tag).filter(Tag.id == tag_id).first()
+        if not tag:
+            raise HTTPException(status_code=404, detail=f"标签ID {tag_id} 不存在")
+        
+        # 检查是否有关联文档
+        doc_count = db.query(document_tags).filter(document_tags.c.tag_id == tag_id).count()
+        has_documents = doc_count > 0
+        
+        # 检查是否有子标签
+        child_count = db.query(Tag).filter(Tag.parent_id == tag_id).count()
+        has_children = child_count > 0
+        
+        # 构建返回结果
+        result = {
+            "can_delete": not has_documents and not has_children,
+            "has_documents": has_documents,
+            "has_children": has_children,
+            "document_count": doc_count,
+            "child_tag_count": child_count
+        }
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"检查标签 {tag_id} 是否可删除时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"检查标签是否可删除失败: {str(e)}")
+
+@router.delete("/tags/{tag_id}")
+async def delete_tag(
+    tag_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db)
+):
+    """删除标签，并处理其在文档和块中的关联
+    
+    参数:
+        tag_id: 要删除的标签ID
+        force: 是否强制删除，设为True时忽略安全检查
+    """
     try:
         tag = db.query(Tag).filter(Tag.id == tag_id).first()
         if not tag:
             raise HTTPException(status_code=404, detail=f"标签ID {tag_id} 不存在")
+
+        # 安全检查：不允许删除有子标签的父标签
+        if not force:
+            child_count = db.query(Tag).filter(Tag.parent_id == tag_id).count()
+            if child_count > 0:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"标签 '{tag.name}' 有 {child_count} 个子标签，无法删除。请先删除所有子标签，或使用force=true参数强制删除"
+                )
 
         # 1. 从 document_tags 中删除关联
         stmt_doc_tags = document_tags.delete().where(document_tags.c.tag_id == tag_id)
@@ -331,11 +427,15 @@ async def delete_tag(
         ).delete(synchronize_session=False)
         logger.info(f"已删除所有与标签ID {tag_id} 相关的依赖关系")
         
-        # 4. 将所有子标签的parent_id设为null
-        db.query(Tag).filter(Tag.parent_id == tag_id).update(
-            {Tag.parent_id: None}, synchronize_session=False
-        )
-        logger.info(f"已将所有子标签从父标签ID {tag_id} 解除关联")
+        # 4. 如果是强制删除，将所有子标签的parent_id设为null
+        if force:
+            child_tags = db.query(Tag).filter(Tag.parent_id == tag_id).all()
+            for child_tag in child_tags:
+                child_tag.parent_id = None
+                # 如果子标签是branch但父标签是root，则子标签也变为root
+                if child_tag.hierarchy_level == "branch" and tag.hierarchy_level == "root":
+                    child_tag.hierarchy_level = "root"
+            logger.info(f"已将所有子标签从父标签ID {tag_id} 解除关联")
         
         # 5. 将当前标签的parent_id设为null（解除与父标签的关系）
         tag.parent_id = None
@@ -771,6 +871,7 @@ async def update_tag(
     tag_type: Optional[str] = Body(None),
     importance: Optional[float] = Body(None),
     related_content: Optional[str] = Body(None),
+    hierarchy_level: Optional[str] = Body(None),
     db: Session = Depends(get_db)
 ):
     """更新标签信息"""
@@ -800,6 +901,13 @@ async def update_tag(
         if parent_id is not None:
             tag.parent_id = parent_id
         
+        # 处理层级设置
+        if hierarchy_level is not None:
+            # 如果设置为root标签，移除父标签
+            if hierarchy_level == "root":
+                tag.parent_id = None
+            tag.hierarchy_level = hierarchy_level
+        
         # 尝试更新可选的新字段
         try:
             if tag_type is not None and hasattr(tag, 'tag_type'):
@@ -820,7 +928,8 @@ async def update_tag(
             "name": tag.name,
             "color": tag.color,
             "description": tag.description,
-            "parent_id": tag.parent_id
+            "parent_id": tag.parent_id,
+            "hierarchy_level": tag.hierarchy_level
         }
         
         # 尝试添加新字段
@@ -863,42 +972,36 @@ async def get_tag_documents(
         # 查找标签
         tag = db.query(Tag).filter(Tag.id == numeric_id).first()
         if not tag:
-            raise HTTPException(status_code=404, detail=f"标签ID {numeric_id} 不存在")
-        
-        # 获取与该标签关联的所有文档
-        documents = db.query(Document)\
-            .join(document_tags, Document.id == document_tags.c.document_id)\
-            .filter(document_tags.c.tag_id == numeric_id)\
-            .all()
-        
-        # 构建响应数据
-        result_documents = []
-        for doc in documents:
-            # 获取知识库名称
-            kb_name = None
-            if doc.knowledge_base_id:
-                kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == doc.knowledge_base_id).first()
-                if kb:
-                    kb_name = kb.name
+            raise HTTPException(status_code=404, detail=f"标签ID {tag_id} 不存在")
             
-            result_documents.append({
+        # 查找与该标签相关联的所有文档
+        documents_query = db.query(Document).join(
+            document_tags,
+            Document.id == document_tags.c.document_id
+        ).filter(
+            document_tags.c.tag_id == numeric_id
+        )
+        
+        documents = documents_query.all()
+        
+        # 格式化结果
+        result = []
+        for doc in documents:
+            result.append({
                 "id": doc.id,
                 "source": doc.source,
                 "document_type": doc.document_type,
-                "status": doc.status,
-                "chunks_count": doc.chunks_count,
-                "added_at": doc.added_at,
-                "processed_at": doc.processed_at,
-                "knowledge_base_id": doc.knowledge_base_id,
-                "knowledge_base_name": kb_name
+                "chunks_count": doc.chunks_count or 0,
+                "knowledge_base_id": doc.knowledge_base_id if hasattr(doc, 'knowledge_base_id') else None
             })
+            
+        return result
         
-        return result_documents
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取标签关联文档失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取标签关联文档失败: {str(e)}")
+        logger.error(f"获取标签 {tag_id} 相关文档失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取标签相关文档失败: {str(e)}")
 
 @router.get("/graph/tag-relations/{knowledge_base_id}")
 async def get_tag_relations_graph(
@@ -912,26 +1015,45 @@ async def get_tag_relations_graph(
         if not kb:
             raise HTTPException(status_code=404, detail=f"知识库ID {knowledge_base_id} 不存在")
         
-        # 获取所有标签 - 不再仅仅获取关联到文档的标签
-        tags = db.query(Tag).all()
+        # 查询与该知识库相关的文档IDs
+        documents = db.query(Document).filter(Document.knowledge_base_id == knowledge_base_id).all()
+        if not documents:
+            logger.info(f"知识库 {knowledge_base_id} 没有关联的文档")
+            return {"nodes": [], "links": []}
+            
+        doc_ids = [doc.id for doc in documents]
+        
+        # 获取与这些文档关联的标签IDs
+        from sqlalchemy import text
+        tag_ids_query = f"""
+            SELECT DISTINCT tag_id 
+            FROM document_tags 
+            WHERE document_id IN ({','.join(str(id) for id in doc_ids)})
+        """
+        result = db.execute(text(tag_ids_query))
+        tag_ids = [row[0] for row in result]
+        
+        if not tag_ids:
+            logger.info(f"知识库 {knowledge_base_id} 的文档没有关联的标签")
+            return {"nodes": [], "links": []}
+        
+        # 获取这些标签的完整信息
+        tags = db.query(Tag).filter(Tag.id.in_(tag_ids)).all()
         if not tags:
             return {"nodes": [], "links": []}
         
         tags_by_id = {tag.id: tag for tag in tags}
-        tag_ids = list(tags_by_id.keys())
-        
-        # 获取文档ID用于后面的共现关系计算
-        documents = db.query(Document).filter(Document.knowledge_base_id == knowledge_base_id).all()
-        doc_ids = [doc.id for doc in documents] if documents else []
         
         # 准备节点数据
         nodes = []
+        node_ids_set = set()  # 跟踪实际添加到图中的节点ID
         
         # 添加根标签节点
         root_tags = [tag for tag in tags if tag.hierarchy_level == "root"]
         for tag in root_tags:
+            node_id = f"tag_{tag.id}"
             nodes.append({
-                "id": f"tag_{tag.id}",
+                "id": node_id,
                 "label": tag.name,
                 "type": "TAG",
                 "tag_type": tag.tag_type,
@@ -941,12 +1063,14 @@ async def get_tag_relations_graph(
                 "shape": "star",  # 使用星形
                 "description": tag.description or ""
             })
+            node_ids_set.add(node_id)
         
         # 添加分支标签节点
         branch_tags = [tag for tag in tags if tag.hierarchy_level == "branch"]
         for tag in branch_tags:
+            node_id = f"tag_{tag.id}"
             nodes.append({
-                "id": f"tag_{tag.id}",
+                "id": node_id,
                 "label": tag.name,
                 "type": "TAG",
                 "tag_type": tag.tag_type,
@@ -956,12 +1080,14 @@ async def get_tag_relations_graph(
                 "shape": "triangle",  # 使用三角形
                 "description": tag.description or ""
             })
+            node_ids_set.add(node_id)
         
         # 添加叶标签节点
         leaf_tags = [tag for tag in tags if tag.hierarchy_level == "leaf" or tag.hierarchy_level is None]
         for tag in leaf_tags:
+            node_id = f"tag_{tag.id}"
             nodes.append({
-                "id": f"tag_{tag.id}",
+                "id": node_id,
                 "label": tag.name,
                 "type": "TAG",
                 "tag_type": tag.tag_type,
@@ -971,47 +1097,68 @@ async def get_tag_relations_graph(
                 "shape": "circle",  # 使用圆形
                 "description": tag.description or ""
             })
+            node_ids_set.add(node_id)
+        
+        logger.info(f"为知识库 {knowledge_base_id} 创建了 {len(nodes)} 个标签节点")
         
         # 准备连接数据
         links = []
         
-        # 添加父子关系连接
+        # 添加父子关系连接 - 首先检查标签是否存在于当前图中
         # 先添加根标签到分支标签的连接
         for tag in branch_tags:
             if tag.parent_id:
-                links.append({
-                    "source": f"tag_{tag.parent_id}",
-                    "target": f"tag_{tag.id}",
-                    "type": "PARENT_OF",
-                    "label": "包含",
-                    "value": 2,  # 增大显示权重
-                    "color": "#1890ff",  # 父子关系使用明显的蓝色
-                    "dashed": False,  # 实线
-                    "width": 2  # 较粗的线
-                })
+                source_id = f"tag_{tag.parent_id}"
+                target_id = f"tag_{tag.id}"
+                # 验证源节点和目标节点都存在
+                if source_id in node_ids_set and target_id in node_ids_set:
+                    links.append({
+                        "source": source_id,
+                        "target": target_id,
+                        "type": "PARENT_OF",
+                        "label": "包含",
+                        "value": 2,  # 增大显示权重
+                        "color": "#1890ff",  # 父子关系使用明显的蓝色
+                        "dashed": False,  # 实线
+                        "width": 2  # 较粗的线
+                    })
+                else:
+                    logger.warning(f"跳过无效的父子关系链接: {source_id} -> {target_id}, 节点不存在")
         
         # 再添加分支标签到叶标签的连接
         for tag in leaf_tags:
             if tag.parent_id:
-                links.append({
-                    "source": f"tag_{tag.parent_id}",
-                    "target": f"tag_{tag.id}",
-                    "type": "PARENT_OF",
-                    "label": "包含",
-                    "value": 1.5,  # 增大显示权重
-                    "color": "#1890ff",  # 父子关系使用明显的蓝色
-                    "dashed": False,  # 实线
-                    "width": 1.5  # 较粗的线
-                })
+                source_id = f"tag_{tag.parent_id}"
+                target_id = f"tag_{tag.id}"
+                # 验证源节点和目标节点都存在
+                if source_id in node_ids_set and target_id in node_ids_set:
+                    links.append({
+                        "source": source_id,
+                        "target": target_id,
+                        "type": "PARENT_OF",
+                        "label": "包含",
+                        "value": 1.5,  # 增大显示权重
+                        "color": "#1890ff",  # 父子关系使用明显的蓝色
+                        "dashed": False,  # 实线
+                        "width": 1.5  # 较粗的线
+                    })
+                else:
+                    logger.warning(f"跳过无效的父子关系链接: {source_id} -> {target_id}, 节点不存在")
         
-        # 添加TagDependency关系连接
-        tag_dependencies = db.query(TagDependency).all()
+        # 添加TagDependency关系连接 - 只包含当前图中存在的标签
+        tag_dependencies = db.query(TagDependency).filter(
+            (TagDependency.source_tag_id.in_(tag_ids)) & 
+            (TagDependency.target_tag_id.in_(tag_ids))
+        ).all()
         
         for dep in tag_dependencies:
-            if dep.source_tag_id in tags_by_id and dep.target_tag_id in tags_by_id:
+            source_id = f"tag_{dep.source_tag_id}"
+            target_id = f"tag_{dep.target_tag_id}"
+            # 验证源节点和目标节点都存在
+            if source_id in node_ids_set and target_id in node_ids_set:
                 links.append({
-                    "source": f"tag_{dep.source_tag_id}",
-                    "target": f"tag_{dep.target_tag_id}",
+                    "source": source_id,
+                    "target": target_id,
                     "type": dep.relationship_type,
                     "label": dep.relationship_type.replace("_", " ").lower(),
                     "value": 0.8,
@@ -1019,6 +1166,8 @@ async def get_tag_relations_graph(
                     "dashed": True,  # 虚线
                     "width": 1  # 正常线宽
                 })
+            else:
+                logger.warning(f"跳过无效的标签依赖关系链接: {source_id} -> {target_id}, 节点不存在")
         
         # 添加共现关系连接 - 只在有文档的情况下
         if tag_ids and doc_ids:
@@ -1042,12 +1191,19 @@ async def get_tag_relations_graph(
                 
                 for row in cooccurrence_results:
                     tag1_id, tag2_id, count = row
+                    source_id = f"tag_{tag1_id}"
+                    target_id = f"tag_{tag2_id}"
+                    
+                    # 验证节点存在
+                    if source_id not in node_ids_set or target_id not in node_ids_set:
+                        logger.warning(f"跳过无效的共现关系链接: {source_id} -> {target_id}, 节点不存在")
+                        continue
                     
                     # 检查是否已有显式的父子关系或依赖关系
                     has_direct_relation = False
                     for link in links:
-                        if (link["source"] == f"tag_{tag1_id}" and link["target"] == f"tag_{tag2_id}") or \
-                           (link["source"] == f"tag_{tag2_id}" and link["target"] == f"tag_{tag1_id}"):
+                        if (link["source"] == source_id and link["target"] == target_id) or \
+                           (link["source"] == target_id and link["target"] == source_id):
                             has_direct_relation = True
                             break
                     
@@ -1057,8 +1213,8 @@ async def get_tag_relations_graph(
                         strength = 0.3 + 0.2 * math.log(1 + count) 
                         
                         links.append({
-                            "source": f"tag_{tag1_id}",
-                            "target": f"tag_{tag2_id}",
+                            "source": source_id,
+                            "target": target_id,
                             "type": "CO_OCCURS",
                             "label": "共现",
                             "value": min(0.7, strength),  # 限制最大值
@@ -1071,6 +1227,7 @@ async def get_tag_relations_graph(
                 logger.warning(f"计算标签共现关系时出错: {str(e)}")
                 # 错误不影响其他部分的图数据显示
         
+        logger.info(f"为知识库 {knowledge_base_id} 创建了 {len(links)} 个标签关系链接")
         return {
             "nodes": nodes,
             "links": links
@@ -1170,4 +1327,254 @@ async def delete_tag_dependency(
     except Exception as e:
         db.rollback()
         logger.error(f"删除标签依赖关系失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"删除标签依赖关系失败: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"删除标签依赖关系失败: {str(e)}")
+
+@router.get("/diagnose/kb/{knowledge_base_id}")
+async def diagnose_knowledge_base(knowledge_base_id: int, db: Session = Depends(get_db)):
+    """诊断功能：检查知识库的文档、标签和向量存储状态"""
+    try:
+        # 检查知识库是否存在
+        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+        if not kb:
+            raise HTTPException(status_code=404, detail=f"知识库ID {knowledge_base_id} 不存在")
+            
+        # 1. 获取知识库的基本信息
+        kb_info = {
+            "id": kb.id,
+            "name": kb.name,
+            "description": kb.description,
+            "created_at": kb.created_at.isoformat() if kb.created_at else None
+        }
+        
+        # 2. 获取知识库关联的文档
+        documents = db.query(Document).filter(Document.knowledge_base_id == knowledge_base_id).all()
+        doc_ids = [doc.id for doc in documents]
+        doc_info = [
+            {
+                "id": doc.id,
+                "source": doc.source,
+                "document_type": doc.document_type,
+                "status": doc.status,
+                "added_at": doc.added_at.isoformat() if doc.added_at else None
+            }
+            for doc in documents
+        ]
+        
+        # 3. 获取文档关联的标签
+        all_tag_ids = set()
+        doc_tag_info = {}
+        
+        for doc_id in doc_ids:
+            # 获取文档直接关联的标签
+            doc_tags_query = f"""
+                SELECT tag_id 
+                FROM document_tags 
+                WHERE document_id = {doc_id}
+            """
+            result = db.execute(text(doc_tags_query))
+            doc_tag_ids = [row[0] for row in result]
+            all_tag_ids.update(doc_tag_ids)
+            
+            # 保存到信息字典
+            doc_tag_info[doc_id] = {
+                "tag_count": len(doc_tag_ids),
+                "tag_ids": doc_tag_ids
+            }
+        
+        # 获取所有标签的信息
+        tags = db.query(Tag).filter(Tag.id.in_(all_tag_ids)) if all_tag_ids else []
+        tag_info = {
+            tag.id: {
+                "id": tag.id,
+                "name": tag.name,
+                "tag_type": tag.tag_type,
+                "hierarchy_level": tag.hierarchy_level
+            }
+            for tag in tags
+        }
+        
+        # 4. 检查向量存储
+        from vector_store import VectorStore
+        vector_store = VectorStore(knowledge_base_id=knowledge_base_id)
+        
+        try:
+            # 获取向量存储中的示例文档
+            vs_docs = await vector_store.get_all_documents(limit=5)
+            
+            # 收集有效标签键
+            vs_tag_keys = set()
+            for doc in vs_docs:
+                if "tag_keys" in doc and doc["tag_keys"]:
+                    vs_tag_keys.update(doc["tag_keys"])
+            
+            vs_info = {
+                "document_count": len(vs_docs),
+                "sample_documents": vs_docs,
+                "tag_keys": list(vs_tag_keys),
+                "has_proper_tag_format": any(key.startswith("tag_") for key in vs_tag_keys)
+            }
+            
+        except Exception as e:
+            vs_info = {
+                "error": str(e),
+                "status": "无法访问向量存储"
+            }
+        
+        # 5. 返回综合诊断
+        return {
+            "knowledge_base": kb_info,
+            "documents": {
+                "count": len(documents),
+                "items": doc_info
+            },
+            "tags": {
+                "count": len(tag_info),
+                "items": list(tag_info.values())
+            },
+            "document_tags": doc_tag_info,
+            "vector_store": vs_info,
+            "diagnosis": {
+                "has_documents": len(documents) > 0,
+                "has_tags": len(tag_info) > 0,
+                "has_vector_docs": vs_info.get("document_count", 0) > 0,
+                "tag_format_correct": vs_info.get("has_proper_tag_format", False),
+                "suggestions": [
+                    "请检查文档是否有标签" if len(tag_info) == 0 else None,
+                    "请检查向量存储是否有文档" if vs_info.get("document_count", 0) == 0 else None,
+                    "请检查标签格式是否正确" if not vs_info.get("has_proper_tag_format", False) else None
+                ]
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"知识库诊断失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"知识库诊断失败: {str(e)}")
+
+@router.get("/diagnose/tag/{tag_id}")
+async def diagnose_tag(tag_id: int, db: Session = Depends(get_db)):
+    """诊断功能：检查标签的关联状态，包括文档关系、父子关系等"""
+    try:
+        # 检查标签是否存在
+        tag = db.query(Tag).filter(Tag.id == tag_id).first()
+        if not tag:
+            raise HTTPException(status_code=404, detail=f"标签ID {tag_id} 不存在")
+            
+        # 获取标签基本信息
+        tag_info = {
+            "id": tag.id,
+            "name": tag.name,
+            "color": tag.color,
+            "description": tag.description,
+            "parent_id": tag.parent_id,
+            "hierarchy_level": tag.hierarchy_level,
+            "tag_type": tag.tag_type,
+            "is_system": tag.is_system if hasattr(tag, 'is_system') else None
+        }
+        
+        # 获取父标签信息
+        parent_info = None
+        if tag.parent_id:
+            parent_tag = db.query(Tag).filter(Tag.id == tag.parent_id).first()
+            if parent_tag:
+                parent_info = {
+                    "id": parent_tag.id,
+                    "name": parent_tag.name,
+                    "hierarchy_level": parent_tag.hierarchy_level
+                }
+        
+        # 获取子标签信息
+        child_tags = db.query(Tag).filter(Tag.parent_id == tag_id).all()
+        child_info = []
+        for child in child_tags:
+            child_info.append({
+                "id": child.id,
+                "name": child.name,
+                "hierarchy_level": child.hierarchy_level
+            })
+            
+        # 获取关联的文档数量
+        from sqlalchemy import func, text
+        doc_count_query = text(f"""
+            SELECT COUNT(DISTINCT document_id) 
+            FROM document_tags 
+            WHERE tag_id = {tag_id}
+        """)
+        doc_count_result = db.execute(doc_count_query).scalar() or 0
+        
+        # 获取关联的文档块数量
+        chunk_count_query = text(f"""
+            SELECT COUNT(DISTINCT document_chunk_id) 
+            FROM document_chunk_tags 
+            WHERE tag_id = {tag_id}
+        """)
+        chunk_count_result = db.execute(chunk_count_query).scalar() or 0
+        
+        # 获取向量存储中的标签使用情况
+        from vector_store import VectorStore
+        vs_diagnostic = {
+            "status": "unavailable",
+            "message": "向量存储诊断未实现"
+        }
+        
+        return {
+            "tag": tag_info,
+            "parent": parent_info,
+            "children": {
+                "count": len(child_info),
+                "items": child_info
+            },
+            "documents": {
+                "count": doc_count_result,
+                "chunk_count": chunk_count_result
+            },
+            "vector_store": vs_diagnostic,
+            "diagnosis": {
+                "has_documents": doc_count_result > 0,
+                "has_chunks": chunk_count_result > 0,
+                "is_orphan": parent_info is None and tag.hierarchy_level != "root",
+                "has_children": len(child_info) > 0
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"标签诊断失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"标签诊断失败: {str(e)}")
+
+@router.get("/tags/deletable")
+async def get_all_deletable_tags(db: Session = Depends(get_db)):
+    """获取所有可以安全删除的标签（没有关联文档且不是父标签且不是root标签）"""
+    try:
+        # 1. 获取所有标签
+        tags = db.query(Tag).all()
+        
+        result = []
+        for tag in tags:
+            # 2. 检查是否有关联文档
+            doc_count = db.query(document_tags).filter(document_tags.c.tag_id == tag.id).count()
+            has_documents = doc_count > 0
+            
+            # 3. 检查是否有子标签
+            child_count = db.query(Tag).filter(Tag.parent_id == tag.id).count()
+            has_children = child_count > 0
+            
+            # 4. 检查是否为root标签
+            is_root = tag.hierarchy_level == "root"
+            
+            # 5. 如果没有关联文档且不是父标签且不是root标签，则添加到结果中
+            if not has_documents and not has_children and not is_root:
+                result.append({
+                    "id": tag.id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "description": tag.description,
+                    "hierarchy_level": tag.hierarchy_level
+                })
+        
+        return {"deletable_tags": result, "count": len(result)}
+    except Exception as e:
+        logger.error(f"获取可删除标签列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取可删除标签列表失败: {str(e)}") 

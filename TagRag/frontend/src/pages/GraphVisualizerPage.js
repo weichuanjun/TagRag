@@ -80,6 +80,20 @@ const GraphVisualizerPage = () => {
         }
     }, [selectedEntity]);
 
+    // 全局错误处理
+    useEffect(() => {
+        const handleError = (event) => {
+            console.error('全局错误捕获:', event.error);
+            // 可以在此添加错误通知或降级策略
+        };
+
+        window.addEventListener('error', handleError);
+
+        return () => {
+            window.removeEventListener('error', handleError);
+        };
+    }, []);
+
     const fetchKnowledgeBases = async () => {
         try {
             const response = await axios.get('/knowledge-bases');
@@ -94,7 +108,12 @@ const GraphVisualizerPage = () => {
 
     const fetchGraphData = async (knowledgeBaseId) => {
         setLoading(true);
+        // 立即清除当前图数据，确保视觉上看到切换效果
+        setGraphData({ nodes: [], links: [] });
+
         try {
+            console.log(`正在获取知识库ID ${knowledgeBaseId} 的图数据，视图模式: ${viewMode}`);
+
             // 构建查询参数
             const params = {};
             if (selectedTagTypes.length > 0) {
@@ -113,8 +132,46 @@ const GraphVisualizerPage = () => {
                     : `/graph/data/${knowledgeBaseId}`;
             }
 
+            console.log(`请求端点: ${endpoint}，参数:`, params);
             const response = await axios.get(endpoint, { params });
-            setGraphData(response.data);
+
+            // 数据验证和预处理
+            let data = response.data;
+
+            // 检查节点和链接数组是否存在
+            if (!data.nodes) data.nodes = [];
+            if (!data.links) data.links = [];
+
+            console.log(`获取到 ${data.nodes.length} 个节点和 ${data.links.length} 个链接`);
+
+            // 创建节点ID集合，用于快速查找
+            const nodeIds = new Set(data.nodes.map(node => node.id));
+
+            // 过滤掉引用不存在节点的链接
+            let validLinks = data.links.filter(link => {
+                const sourceExists = nodeIds.has(typeof link.source === 'object' ? link.source.id : link.source);
+                const targetExists = nodeIds.has(typeof link.target === 'object' ? link.target.id : link.target);
+
+                if (!sourceExists || !targetExists) {
+                    console.warn(`过滤无效链接: source=${typeof link.source === 'object' ? link.source.id : link.source}, target=${typeof link.target === 'object' ? link.target.id : link.target}`);
+                    return false;
+                }
+                return true;
+            });
+
+            if (validLinks.length !== data.links.length) {
+                console.warn(`过滤了 ${data.links.length - validLinks.length} 个无效链接`);
+            }
+
+            // 更新数据
+            data.links = validLinks;
+
+            // 当节点数量为0时，显示警告
+            if (data.nodes.length === 0) {
+                console.warn(`知识库 ${knowledgeBaseId} 没有标签数据`);
+            }
+
+            setGraphData(data);
         } catch (error) {
             console.error('获取图数据失败:', error);
             // 如果没有图数据，设置为空
@@ -226,21 +283,41 @@ const GraphVisualizerPage = () => {
         const tagNodes = graphData.nodes.filter(node => node.type === 'TAG');
         if (tagNodes.length === 0) return;
 
-        // 计算标签节点的平均坐标
-        let sumX = 0, sumY = 0;
-        for (const node of tagNodes) {
-            if (node.x !== undefined && node.y !== undefined) {
-                sumX += node.x;
-                sumY += node.y;
+        try {
+            // 计算标签节点的平均坐标
+            let validNodes = 0;
+            let sumX = 0, sumY = 0;
+
+            for (const node of tagNodes) {
+                if (node.x !== undefined && node.y !== undefined &&
+                    !isNaN(node.x) && !isNaN(node.y)) {
+                    sumX += node.x;
+                    sumY += node.y;
+                    validNodes++;
+                }
             }
+
+            // 确保至少有一个有效节点
+            if (validNodes === 0) {
+                console.warn('没有找到有效的标签节点坐标');
+                return;
+            }
+
+            const avgX = sumX / validNodes;
+            const avgY = sumY / validNodes;
+
+            // 确保坐标是有效数字
+            if (isNaN(avgX) || isNaN(avgY)) {
+                console.warn('计算的平均坐标无效');
+                return;
+            }
+
+            // 居中并以适当比例显示
+            graphRef.current.centerAt(avgX, avgY, 800);
+            graphRef.current.zoom(1.2, 800);
+        } catch (error) {
+            console.error('居中标签节点时出错:', error);
         }
-
-        const avgX = sumX / tagNodes.length;
-        const avgY = sumY / tagNodes.length;
-
-        // 居中并以适当比例显示
-        graphRef.current.centerAt(avgX, avgY, 800);
-        graphRef.current.zoom(1.2, 800);
     };
 
     // 重新布局图表
@@ -610,11 +687,20 @@ const GraphVisualizerPage = () => {
                                 return link.width || 0.8;
                             }}
                             linkColor={link => {
-                                if (selectedEntity && (link.source.id === selectedEntity.id || link.target.id === selectedEntity.id)) {
-                                    return '#ff6600'; // 高亮选中节点的连接
+                                try {
+                                    if (selectedEntity && (
+                                        (link.source.id === selectedEntity.id || link.target.id === selectedEntity.id) ||
+                                        (typeof link.source === 'string' && link.source === selectedEntity.id) ||
+                                        (typeof link.target === 'string' && link.target === selectedEntity.id)
+                                    )) {
+                                        return '#ff6600'; // 高亮选中节点的连接
+                                    }
+                                } catch (error) {
+                                    console.warn('链接处理错误:', error);
                                 }
                                 return link.color || '#999';
                             }}
+                            nodeCanvasObjectMode={() => 'replace'}
                             onNodeClick={handleNodeClick}
                             cooldownTicks={100}
                             nodeCanvasObject={getNodeCanvasObject}

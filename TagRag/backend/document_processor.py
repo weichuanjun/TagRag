@@ -326,8 +326,6 @@ class DocumentProcessor:
                 knowledge_base_id=knowledge_base_id, 
                 original_filename=db_document.source
             )
-            # Add log to check the sample returned
-            logger.debug(f"process_document received content sample (length: {len(content_sample_for_llm)}) from _load_and_process_document. Sample start: {content_sample_for_llm[:200]}")
 
             if not raw_langchain_chunks or (len(raw_langchain_chunks) == 1 and raw_langchain_chunks[0].page_content.startswith("[Error:")):
                 error_content = raw_langchain_chunks[0].page_content if raw_langchain_chunks else "Unknown loading error"
@@ -352,44 +350,24 @@ class DocumentProcessor:
             langchain_docs_for_vector_store: List[Document] = []
 
             for i, chunk_doc in enumerate(raw_langchain_chunks):
-                # ---- DEV_PROCESSOR_DBG Start ----
-                page_content_for_debug = chunk_doc.page_content if isinstance(chunk_doc, Document) else None
-                logger.info(f"DEV_PROCESSOR_DBG: Processing chunk {i} for doc_id {document_id}. Original chunk object type: {type(chunk_doc)}")
-                if isinstance(page_content_for_debug, str):
-                    logger.info(f"DEV_PROCESSOR_DBG: Page content (repr): {repr(page_content_for_debug)}")
-                    logger.info(f"DEV_PROCESSOR_DBG: Page content (direct print): '{page_content_for_debug}'")
-                    logger.info(f"DEV_PROCESSOR_DBG: Is page_content an empty string? {page_content_for_debug == ''}")
-                    logger.info(f"DEV_PROCESSOR_DBG: Does page_content consist only of whitespace? {page_content_for_debug.isspace() if page_content_for_debug else False}")
-                    logger.info(f"DEV_PROCESSOR_DBG: Does page_content start with [Error:? {page_content_for_debug.startswith('[Error:')}")
-                else:
-                    logger.info(f"DEV_PROCESSOR_DBG: Page content is not a string or chunk_doc is not a Document. Content: {page_content_for_debug}")
-                # ---- DEV_PROCESSOR_DBG End ----
-
-                # Original condition that was supposed to skip empty/error chunks
-                # Ensure page_content_for_debug is used here for consistency with debug logs
+                # 原始条件，跳过空/错误块
                 should_skip = False
-                if not isinstance(chunk_doc, Document) or not page_content_for_debug:
+                if not isinstance(chunk_doc, Document) or not chunk_doc.page_content:
                     should_skip = True
-                elif isinstance(page_content_for_debug, str) and page_content_for_debug.startswith("[Error:"):
+                elif isinstance(chunk_doc.page_content, str) and chunk_doc.page_content.startswith("[Error:"):
                     should_skip = True
                 
                 if should_skip:
-                    logger.warning(f"DEV_PROCESSOR_DBG: SKIPPING chunk {i} for doc_id {document_id} based on condition. Content (repr): {repr(page_content_for_debug)}")
                     continue
                 
-                # This must be called only with valid page_content_for_debug (not None, not starting with [Error:)
-                token_count = count_tokens(page_content_for_debug) 
-                logger.info(f"DEV_PROCESSOR_DBG: Calculated token_count: {token_count} for the above content (chunk {i}).")
+                # 计算令牌数
+                token_count = count_tokens(chunk_doc.page_content) 
 
                 # Enrich metadata for this chunk
                 chunk_doc.metadata["token_count"] = token_count
                 chunk_doc.metadata["structural_type"] = chunk_doc.metadata.get('category', 'paragraph')
-                # chunk_doc.metadata["tag_ids"] = document_level_tag_ids # Old way
-                # logger.info(f"PROCESS_DOCUMENT DBG: Chunk {i} of doc {document_id} assigned metadata tag_ids: {chunk_doc.metadata.get('tag_ids')}")
 
                 # Prepare DB ORM object (DocumentChunk)
-                # Ensure metadata for DB is JSON serializable; filter_complex_metadata can help here too if needed
-                # For now, assume direct use is fine or handle specific complex fields if they arise.
                 try:
                     chunk_metadata_for_db = json.dumps(chunk_doc.metadata)
                 except TypeError as te:
@@ -415,9 +393,6 @@ class DocumentProcessor:
                 # Remove the list-based 'tag_ids' if it was accidentally set on chunk_doc.metadata earlier
                 if "tag_ids" in metadata_for_vector_store_dict:
                     del metadata_for_vector_store_dict["tag_ids"]
-
-                # 暂时先不添加扁平化标签，因为标签还没有生成
-                # 将在标签分析后更新metadata
 
                 # 只保留标量值
                 final_meta_for_chroma = {}
@@ -448,10 +423,10 @@ class DocumentProcessor:
                     logger.error(f"Error during LLM auto-tagging for doc_id {document_id}: {e_autotag}", exc_info=True)
                     # Non-fatal, proceed without LLM tags if analysis fails
             else:
-                logger.info(f"Skipping LLM auto-tagging for doc_id {document_id} due to empty or error content sample (checked in process_document).") # Updated log
+                logger.info(f"Skipping LLM auto-tagging for doc_id {document_id} due to empty or error content sample.") 
 
             document_level_tag_ids = [tag.id for tag in db_document.tags] if db_document.tags else []
-            logger.info(f"PROCESS_DOCUMENT DBG: Document-level tag IDs for doc_id {document_id} after auto-tagging (or if skipped): {document_level_tag_ids}")
+            logger.info(f"Document-level tag IDs for doc_id {document_id} after auto-tagging: {document_level_tag_ids}")
 
             # 现在更新文档块的标签关系
             if db_document.tags and db_chunks_to_save:
@@ -500,18 +475,71 @@ class DocumentProcessor:
             # 现在更新向量存储的元数据，添加标签信息
             if document_level_tag_ids:
                 for lang_doc in langchain_docs_for_vector_store:
-                    # 添加扁平化标签: e.g., tag_10: True, tag_9: True
+                    # 删除可能存在的旧tag_ids字段
+                    if "tag_ids" in lang_doc.metadata:
+                        del lang_doc.metadata["tag_ids"]
+                        
+                    # 添加标签信息: tag_10: True, tag_9: True 格式
                     for tag_id in document_level_tag_ids:
                         lang_doc.metadata[f"tag_{tag_id}"] = True
                     
+                    # 确保知识库ID添加到metadata
+                    if knowledge_base_id:
+                        lang_doc.metadata["knowledge_base_id"] = knowledge_base_id
+                    
                 # 记录更新
-                logger.info(f"Updated metadata for vector store documents with tag IDs: {document_level_tag_ids}")
-
-            # 4. Add to Vector Store (现在包含了标签信息)
+                logger.info(f"已经为向量存储文档更新标签元数据，标签ID: {document_level_tag_ids}")
+                # 记录样本以验证
+                if langchain_docs_for_vector_store:
+                    logger.info(f"元数据样本: {langchain_docs_for_vector_store[0].metadata}")
+            
+            # 验证向量存储元数据是否正确
+            has_invalid_metadata = False
+            for idx, lang_doc in enumerate(langchain_docs_for_vector_store):
+                meta = lang_doc.metadata
+                # 检查标签格式是否正确
+                if document_level_tag_ids:
+                    for tag_id in document_level_tag_ids:
+                        tag_key = f"tag_{tag_id}"
+                        if tag_key not in meta or meta[tag_key] is not True:
+                            logger.warning(f"文档 {document_id} 的块 {idx} 标签格式不正确: {tag_key} = {meta.get(tag_key)}")
+                            meta[tag_key] = True  # 修复格式
+                            has_invalid_metadata = True
+                # 确保知识库ID存在
+                if knowledge_base_id and ("knowledge_base_id" not in meta or meta["knowledge_base_id"] != knowledge_base_id):
+                    logger.warning(f"文档 {document_id} 的块 {idx} 知识库ID不正确: {meta.get('knowledge_base_id')} != {knowledge_base_id}")
+                    meta["knowledge_base_id"] = knowledge_base_id  # 修复知识库ID
+                    has_invalid_metadata = True
+            
+            if has_invalid_metadata:
+                logger.info("已修复部分文档元数据格式问题")
+                
+            # 4. Add to Vector Store (现在包含了正确格式的标签信息)
             if langchain_docs_for_vector_store:
                 from vector_store import VectorStore # Ensure import is within reach or global
-                vector_store_instance = VectorStore(repository_id=repository_id) # Assuming one VS per repo or global if repo_id is None
-                vs_add_result = await vector_store_instance.add_documents(langchain_docs_for_vector_store, document_id=document_id)
+                
+                # 确保使用正确的知识库和仓库ID
+                if knowledge_base_id is not None:
+                    # 优先使用知识库ID
+                    vector_store_instance = VectorStore(knowledge_base_id=knowledge_base_id)
+                    logger.info(f"使用知识库ID {knowledge_base_id} 创建向量存储实例")
+                else:
+                    # 如果没有知识库ID，使用仓库ID
+                    vector_store_instance = VectorStore(repository_id=repository_id)
+                    logger.info(f"使用仓库ID {repository_id} 创建向量存储实例")
+                
+                # 记录重要信息，用于调试
+                logger.info(f"向量存储实例创建完成，collection_name: {vector_store_instance.collection_name}")
+                logger.info(f"添加 {len(langchain_docs_for_vector_store)} 个文档到向量存储，知识库ID: {knowledge_base_id}, 文档ID: {document_id}")
+                logger.info(f"第一个文档块元数据: {langchain_docs_for_vector_store[0].metadata}")
+                
+                # 添加文档到向量存储
+                vs_add_result = await vector_store_instance.add_documents(
+                    langchain_docs_for_vector_store, 
+                    source_file=source_name_for_logging,
+                    document_id=document_id
+                )
+                
                 if vs_add_result.get("status") == "error":
                     logger.error(f"Failed to add documents to vector store for doc_id {document_id}. Error: {vs_add_result.get('message')}")
                     final_status = "error_vector_store"

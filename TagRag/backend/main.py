@@ -130,13 +130,30 @@ def get_vector_store(repository_id: int = None, knowledge_base_id: int = None) -
     if cache_key not in vector_store_cache:
         logger.info(f"创建新的向量存储实例: {cache_key}")
         if knowledge_base_id is not None:
+            # 创建特定知识库的VectorStore实例
             vector_store_cache[cache_key] = VectorStore(knowledge_base_id=knowledge_base_id)
         else:
+            # 创建特定仓库的VectorStore实例
             vector_store_cache[cache_key] = VectorStore(repository_id=repository_id)
     else:
         logger.info(f"使用缓存的向量存储实例: {cache_key}")
     
-    return vector_store_cache[cache_key]
+    # 确保返回的是正确的实例
+    instance = vector_store_cache[cache_key]
+    
+    # 检查实例是否已经有了正确的ID信息
+    if knowledge_base_id is not None and hasattr(instance, "knowledge_base_id"):
+        if instance.knowledge_base_id != knowledge_base_id:
+            logger.warning(f"缓存的向量存储实例knowledge_base_id={instance.knowledge_base_id}与请求的knowledge_base_id={knowledge_base_id}不匹配，重新创建")
+            vector_store_cache[cache_key] = VectorStore(knowledge_base_id=knowledge_base_id)
+            instance = vector_store_cache[cache_key]
+    elif repository_id is not None and hasattr(instance, "repository_id"):
+        if instance.repository_id != repository_id:
+            logger.warning(f"缓存的向量存储实例repository_id={instance.repository_id}与请求的repository_id={repository_id}不匹配，重新创建")
+            vector_store_cache[cache_key] = VectorStore(repository_id=repository_id)
+            instance = vector_store_cache[cache_key]
+            
+    return instance
 
 # API端点
 @app.get("/")
@@ -235,10 +252,14 @@ async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
         knowledge_base_id = request.knowledge_base_id
         repository_id = None
         
-        # 仅一次查询知识库信息
+        # 确保知识库ID有效
         if knowledge_base_id:
             kb_entry = db.query(KnowledgeBase).options(joinedload(KnowledgeBase.repositories)).filter(KnowledgeBase.id == knowledge_base_id).first()
-            if kb_entry and kb_entry.repositories:
+            if not kb_entry:
+                logger.error(f"知识库ID {knowledge_base_id} 不存在")
+                raise HTTPException(status_code=404, detail=f"知识库ID {knowledge_base_id} 不存在")
+                
+            if kb_entry.repositories:
                 repository_id = kb_entry.repositories[0].id 
                 logger.info(f"Found repository_id {repository_id} for KB {knowledge_base_id}")
             else:
@@ -259,7 +280,7 @@ async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
                 logger.error("TagRAG flow initiated without a knowledge_base_id.")
                 raise HTTPException(status_code=400, detail="Knowledge Base ID is required for TagRAG flow.")
 
-            logger.info("Using TagRAG flow in /ask endpoint...")
+            logger.info(f"Using TagRAG flow in /ask endpoint for KB {knowledge_base_id}...")
             try:
                 tag_rag_response: TagRAGChatResponse = await current_agent_manager.generate_answer_tag_rag(
                     user_query=request.query,
@@ -284,7 +305,7 @@ async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
                  raise HTTPException(status_code=500, detail=f"Error in TagRAG processing: {str(tag_rag_err)}")
         else:
             # --- Original Flow --- 
-            logger.info("Using Original flow in /ask endpoint...")
+            logger.info(f"Using Original flow in /ask endpoint for KB {knowledge_base_id}...")
             code_analyzer = None
             if request.use_code_analysis:
                 if repository_id is None and knowledge_base_id: # 如果只有 kb_id, 尝试用它作为 repo_id

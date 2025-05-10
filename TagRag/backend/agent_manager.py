@@ -96,7 +96,7 @@ class AgentManager:
         
         self.thinking_process.append(log_entry)
         # Also log to standard logger for real-time visibility if needed
-        logger.log(getattr(logging, level.upper(), logging.INFO), f"ThinkingProcess - {agent_name}: {step_info} {kwargs if kwargs else ''}")
+        logger.log(getattr(logging, level.upper(), logging.INFO), f"ThinkingProcess - {agent_name}: {step_info}")
     
     def _init_agents(self, use_code_analysis=False, prompt_configs=None):
         """初始化智能体"""
@@ -237,18 +237,13 @@ class AgentManager:
 
 请仅返回有效的JSON字符串列表，并确保列表中包含至少一个与查询紧密相关的标签。
 '''
-        self.log_thinking_process(
-            "发送给LLM用于生成T(q)的完整Prompt",
-            "QueryTagGeneratorAgent",
-            prompt_details={"full_prompt_tq": prompt}
-        )
         
         if not self.llm_client:
             self.log_thinking_process("LLMClient not initialized.", "QueryTagGeneratorAgent", level="ERROR")
             return []
             
         llm_response_str = await self.llm_client.generate(prompt)
-        self.log_thinking_process(f"LLM原始返回 (T(q)): '{llm_response_str}'", "QueryTagGeneratorAgent", llm_raw_response=llm_response_str)
+        self.log_thinking_process(f"LLM原始返回: '{llm_response_str[:100]}...'", "QueryTagGeneratorAgent")
 
         generated_tags_tq: List[Dict[str, Any]] = [] # Final list of {'id': int, 'name': str, 'tag_type': str}
         tag_names_from_llm: List[str] = []
@@ -263,7 +258,6 @@ class AgentManager:
                 if cleaned_response.endswith("```"):
                     cleaned_response = cleaned_response[:-len("```"):].strip()
                 
-                self.log_thinking_process(f"Cleaned LLM response for JSON parsing: {cleaned_response}", "QueryTagGeneratorAgent", cleaned_llm_response=cleaned_response)
                 parsed_llm_output = json.loads(cleaned_response)
                 
                 if isinstance(parsed_llm_output, list) and all(isinstance(tag_name, str) for tag_name in parsed_llm_output):
@@ -271,7 +265,7 @@ class AgentManager:
                 elif isinstance(parsed_llm_output, dict) and "tags" in parsed_llm_output and isinstance(parsed_llm_output["tags"], list):
                     tag_names_from_llm = parsed_llm_output["tags"]
                 else:
-                    self.log_thinking_process(f"LLM T(q) response format unexpected: {parsed_llm_output}", "QueryTagGeneratorAgent", level="WARNING", parsed_output=parsed_llm_output)
+                    self.log_thinking_process(f"LLM T(q) response format unexpected: {parsed_llm_output}", "QueryTagGeneratorAgent", level="WARNING")
 
                 if tag_names_from_llm and self.db:
                     for tag_name_raw in tag_names_from_llm:
@@ -281,9 +275,6 @@ class AgentManager:
                         tag_orm_instance = self.db.query(DBTag).filter(DBTag.name.ilike(tag_name)).first()
                         tag_type_for_response = "existing_system_tag"
                         if not tag_orm_instance:
-                            # Check if it's one of the "newly generated" placeholder names if we implement that pattern
-                            # For now, assume any non-existing is a new query-generated tag
-                            
                             # Create new tag if it doesn't exist
                             self.log_thinking_process(f"T(q)中出现新标签 '{tag_name}'，将为其创建记录。", "QueryTagGeneratorAgent", new_tag_name=tag_name)
                             tag_orm_instance = DBTag(
@@ -295,15 +286,15 @@ class AgentManager:
                                 self.db.add(tag_orm_instance)
                                 self.db.commit()
                                 self.db.refresh(tag_orm_instance)
-                                self.log_thinking_process(f"T(q)中识别到新创标签: '{tag_orm_instance.name}' (ID: {tag_orm_instance.id})", "QueryTagGeneratorAgent", tag_info={"id": tag_orm_instance.id, "name": tag_orm_instance.name, "type": "newly_created_for_query"})
+                                self.log_thinking_process(f"T(q)中识别到新创标签: '{tag_orm_instance.name}' (ID: {tag_orm_instance.id})", "QueryTagGeneratorAgent")
                                 tag_type_for_response = "newly_created_for_query"
                             except Exception as e_create_tag:
-                                self.log_thinking_process(f"为T(q)创建新标签 '{tag_name}' 失败: {e_create_tag}", "QueryTagGeneratorAgent", level="ERROR", error_details=str(e_create_tag))
+                                self.log_thinking_process(f"为T(q)创建新标签 '{tag_name}' 失败: {e_create_tag}", "QueryTagGeneratorAgent", level="ERROR")
                                 self.db.rollback()
                                 continue # Skip this tag if creation failed
                         else:
                             tag_type_for_response = tag_orm_instance.tag_type or "existing_system_tag" # Use existing type if available
-                            self.log_thinking_process(f"T(q)中识别到已存在系统标签: '{tag_orm_instance.name}' (ID: {tag_orm_instance.id})", "QueryTagGeneratorAgent", tag_info={"id": tag_orm_instance.id, "name": tag_orm_instance.name, "type": "existing_system_tag"})
+                            self.log_thinking_process(f"T(q)中识别到已存在系统标签: '{tag_orm_instance.name}' (ID: {tag_orm_instance.id})", "QueryTagGeneratorAgent")
                         
                         generated_tags_tq.append({
                             "id": tag_orm_instance.id, 
@@ -311,13 +302,13 @@ class AgentManager:
                             "tag_type": tag_type_for_response 
                         })
             except json.JSONDecodeError:
-                self.log_thinking_process(f"LLM T(q) response is not valid JSON: {cleaned_response}", "QueryTagGeneratorAgent", level="ERROR", invalid_json_response=cleaned_response)
+                self.log_thinking_process(f"LLM T(q) response is not valid JSON", "QueryTagGeneratorAgent", level="ERROR")
             except Exception as e_parse:
-                 self.log_thinking_process(f"解析或处理LLM T(q)响应时出错: {e_parse}", "QueryTagGeneratorAgent", level="ERROR", error_details=str(e_parse), raw_response=llm_response_str)
+                 self.log_thinking_process(f"解析或处理LLM T(q)响应时出错: {e_parse}", "QueryTagGeneratorAgent", level="ERROR")
         else:
             self.log_thinking_process("LLM T(q) response was empty.", "QueryTagGeneratorAgent", level="WARNING")
 
-        self.log_thinking_process(f"完成T(q)生成。共生成 {len(generated_tags_tq)} 个标签。", "QueryTagGeneratorAgent", status="Completed", generated_tq_count=len(generated_tags_tq), final_tq_list=[{"id": t["id"], "name": t["name"]} for t in generated_tags_tq])
+        self.log_thinking_process(f"完成T(q)生成。共生成 {len(generated_tags_tq)} 个标签。", "QueryTagGeneratorAgent", status="Completed")
         return generated_tags_tq
 
     async def generate_answer_tag_rag(
@@ -366,55 +357,90 @@ class AgentManager:
             query_tag_ids_for_filtering = [tag.id for tag in final_referenced_tags_info] # Use .id from Pydantic model
             query_tag_names_for_logging = [tag.name for tag in final_referenced_tags_info]
             self.log_thinking_process(
-                f"QueryTagGeneratorAgent 为查询 '{user_query}' 生成的标签ID进行过滤: {query_tag_ids_for_filtering} (名称: {query_tag_names_for_logging})",
-                "SystemCoordinator",
-                filtering_tag_ids=query_tag_ids_for_filtering,
-                filtering_tag_names=query_tag_names_for_logging
+                f"使用标签ID进行过滤: {query_tag_ids_for_filtering} (名称: {query_tag_names_for_logging})",
+                "SystemCoordinator"
             )
 
-            metadata_filter_for_tags: Dict[str, Any] = {}
-            if query_tag_ids_for_filtering:
-                conditions = [{f"tag_{tag_id}": True} for tag_id in query_tag_ids_for_filtering]
-                if conditions:
-                    if len(conditions) == 1:
-                        metadata_filter_for_tags = conditions[0]
-                    else:
-                        metadata_filter_for_tags = {"$or": conditions}
+            metadata_filter_for_tags = {}
+            relevant_tag_ids = [tag.id for tag in final_referenced_tags_info]
+            if relevant_tag_ids:
+                # 使用OR逻辑关联标签：拥有任何一个标签的文档块都会被检索
+                for tag_id in relevant_tag_ids:
+                    metadata_filter_for_tags[f"tag_{tag_id}"] = True
+                
+                self.log_thinking_process(f"使用标签过滤器: {metadata_filter_for_tags}", "TagFilterAgent")
+            else:
+                self.log_thinking_process("没有找到相关标签，将使用普通的向量搜索", "TagFilterAgent")
             
-            self.log_thinking_process(
-                "TagFilterAgent 将使用以下元数据过滤器进行块检索",
-                "TagFilterAgent",
-                filter_condition=metadata_filter_for_tags
-            )
-
+            # 使用标签过滤器在向量存储中检索文档块
+            # 先诊断知识库搜索状态
+            try:
+                # 尝试获取一些示例文档以诊断知识库存储状态
+                diagnostic_docs = await vector_store_for_query.get_all_documents(limit=3)
+                if diagnostic_docs:
+                    tag_keys = []
+                    for doc in diagnostic_docs:
+                        # 收集所有标签键
+                        doc_tag_keys = [k for k in doc.get("metadata", {}) if k.startswith("tag_")]
+                        tag_keys.extend(doc_tag_keys)
+                    
+                    if tag_keys:
+                        self.log_thinking_process(
+                            f"诊断信息: 知识库中的文档有 {len(set(tag_keys))} 个不同的标签键",
+                            "TagFilterAgent", status="Diagnostic", level="INFO"
+                        )
+                    else:
+                        self.log_thinking_process(
+                            "诊断警告: 知识库中的文档没有标签键",
+                            "TagFilterAgent", status="DiagnosticWarning", level="WARN"
+                        )
+                else:
+                    self.log_thinking_process(
+                        f"诊断警告: 知识库 {knowledge_base_id} 中没有找到任何文档",
+                        "TagFilterAgent", status="DiagnosticWarning", level="WARN"
+                    )
+            except Exception as e:
+                self.log_thinking_process(
+                    f"诊断错误: {str(e)}",
+                    "TagFilterAgent", status="DiagnosticError", level="ERROR"
+                )
+            
+            # 执行搜索
             candidate_chunks_raw = await vector_store_for_query.search(
                 query=user_query, 
                 k=TAG_FILTER_RETRIEVAL_K, 
                 knowledge_base_id=knowledge_base_id, 
                 metadata_filter=metadata_filter_for_tags if metadata_filter_for_tags else None
             )
-            self.log_thinking_process(f"TagFilterAgent 检索到 {len(candidate_chunks_raw)} 个原始候选块。", "TagFilterAgent", status="Completed", retrieved_count_raw=len(candidate_chunks_raw))
+            self.log_thinking_process(f"检索到 {len(candidate_chunks_raw)} 个原始候选块。", "TagFilterAgent", status="Completed")
 
-            # 新增：如果标签过滤没有找到任何块，退化到普通向量搜索
+            # 如果标签过滤没有找到任何块，退化到当前知识库的普通向量搜索
             if len(candidate_chunks_raw) == 0 and metadata_filter_for_tags:
-                self.log_thinking_process("标签过滤没有找到文档块，退化到普通向量搜索模式。", "TagFilterAgent", status="Fallback", filter_condition=metadata_filter_for_tags)
+                self.log_thinking_process("标签过滤没有找到文档块，退化到当前知识库的普通向量搜索模式。", "TagFilterAgent", status="Fallback")
                 candidate_chunks_raw = await vector_store_for_query.search(
                     query=user_query, 
                     k=TAG_FILTER_RETRIEVAL_K, 
-                    knowledge_base_id=knowledge_base_id, 
-                    metadata_filter=None # 不使用标签过滤
+                    knowledge_base_id=knowledge_base_id,  # 仍然限制在当前知识库
+                    metadata_filter=None  # 不使用标签过滤器
                 )
-                self.log_thinking_process(f"TagFilterAgent (回退模式) 检索到 {len(candidate_chunks_raw)} 个原始候选块。", "TagFilterAgent", status="Completed", retrieved_count_raw=len(candidate_chunks_raw), retrieval_mode="fallback_no_filter")
+                self.log_thinking_process(f"在无标签过滤模式下检索到 {len(candidate_chunks_raw)} 个原始候选块。", "TagFilterAgent", status="FallbackCompleted")
+            
+            # 如果仍然没有结果，记录错误并继续后续步骤
+            if len(candidate_chunks_raw) == 0:
+                self.log_thinking_process("无法找到与查询相关的文档块 - 可能需要上传更多相关内容到知识库。", "TagFilterAgent", status="NoResults")
+                no_documents_found = True  # 标记没有找到文档
+            else:
+                no_documents_found = False
 
             scored_chunks: List[Dict[str, Any]] = []
             if candidate_chunks_raw:
-                self.log_thinking_process(f"ExcerptAgent 开始对 {len(candidate_chunks_raw)} 个候选块进行 T-CUS 评分。", "ExcerptAgent", candidates_count=len(candidate_chunks_raw))
+                self.log_thinking_process(f"开始对 {len(candidate_chunks_raw)} 个候选块进行 T-CUS 评分。", "ExcerptAgent")
                 query_embedding = None
                 if self.embedding_instance:
                     try:
                         query_embedding = self.embedding_instance.embed_query(user_query)
                     except Exception as e_embed_query:
-                        self.log_thinking_process(f"生成查询嵌入时出错: {e_embed_query}", "ExcerptAgent", level="ERROR", error_details=str(e_embed_query))
+                        self.log_thinking_process(f"生成查询嵌入时出错: {e_embed_query}", "ExcerptAgent", level="ERROR")
                 else:
                     self.log_thinking_process("嵌入模型实例不可用，无法生成查询嵌入。", "ExcerptAgent", level="ERROR")
 
@@ -423,14 +449,14 @@ class AgentManager:
                         chunk_text = chunk_dict_from_search.get("text", "")
                         chunk_metadata = chunk_dict_from_search.get("metadata", {})
                         if not chunk_text: 
-                            self.log_thinking_process(f"块 {i_chunk} 内容为空，跳过评分。", "ExcerptAgent", level="WARNING", chunk_index=i_chunk)
+                            self.log_thinking_process(f"块 {i_chunk} 内容为空，跳过评分。", "ExcerptAgent", level="WARNING")
                             continue
 
                         source_file = chunk_metadata.get('source', '未知文件')
                         chunk_idx_from_meta = chunk_metadata.get('chunk_index', i_chunk)
                         
                         # Log processing of chunk (can be detailed here or briefer)
-                        self.log_thinking_process(f"ExcerptAgent 处理块 {i_chunk+1}/{len(candidate_chunks_raw)}: 文件='{source_file}', 索引={chunk_idx_from_meta}", "ExcerptAgent")
+                        self.log_thinking_process(f"处理块 {i_chunk+1}/{len(candidate_chunks_raw)}: 文件='{source_file}'", "ExcerptAgent")
                         
                         try:
                             score = await calculate_t_cus_score(
@@ -449,16 +475,16 @@ class AgentManager:
                                 "score": score, # This is the T-CUS score
                                 "token_count": chunk_metadata.get("token_count", len(chunk_text.split())) # Use from meta or estimate
                             })
-                            self.log_thinking_process(f"ExcerptAgent 评分完成: 文件='{source_file}', 索引={chunk_idx_from_meta}, T-CUS分数={score:.4f}", "ExcerptAgent")
+                            self.log_thinking_process(f"评分完成: 文件='{source_file}', T-CUS分数={score:.4f}", "ExcerptAgent")
                         except Exception as score_err:
-                            self.log_thinking_process(f"ExcerptAgent 评分块时出错 (文件='{source_file}', 索引={chunk_idx_from_meta}): {score_err}", "ExcerptAgent", level="ERROR", error_details=str(score_err))
-            self.log_thinking_process(f"ExcerptAgent 完成对候选块的评分。共评分 {len(scored_chunks)} 个块。", "ExcerptAgent", status="Completed", scored_chunk_count=len(scored_chunks))
+                            self.log_thinking_process(f"评分块时出错 (文件='{source_file}'): {score_err}", "ExcerptAgent", level="ERROR")
+            self.log_thinking_process(f"完成对候选块的评分。共评分 {len(scored_chunks)} 个块。", "ExcerptAgent", status="Completed")
 
             selected_context_for_llm = ""
             selected_chunk_data_objects_for_api: List[Dict[str, Any]] = [] 
             final_referenced_excerpts_info.clear()
 
-            self.log_thinking_process(f"ContextAssemblerAgent 开始选择上下文。已评分块数量: {len(scored_chunks)}, Token上限: {CONTEXT_TOKEN_LIMIT}", "ContextAssemblerAgent", scored_chunks_count=len(scored_chunks), token_limit=CONTEXT_TOKEN_LIMIT)
+            self.log_thinking_process(f"开始选择上下文。已评分块数量: {len(scored_chunks)}, Token上限: {CONTEXT_TOKEN_LIMIT}", "ContextAssemblerAgent")
             try:
                 if scored_chunks:
                     selected_context_for_llm, selected_chunk_data_objects_for_api = greedy_token_constrained_selection(
@@ -466,11 +492,9 @@ class AgentManager:
                         CONTEXT_TOKEN_LIMIT
                     )
                     self.log_thinking_process(
-                        f"ContextAssemblerAgent 上下文组装完成。最终上下文长度: {len(selected_context_for_llm)} 字符。共选定 {len(selected_chunk_data_objects_for_api)} 个块。",
+                        f"上下文组装完成。共选定 {len(selected_chunk_data_objects_for_api)} 个块。",
                         "ContextAssemblerAgent", 
-                        status="Completed", 
-                        final_context_length_chars=len(selected_context_for_llm),
-                        selected_chunks_for_context_count=len(selected_chunk_data_objects_for_api)
+                        status="Completed"
                     )
                     
                     for i, sel_chunk_data in enumerate(selected_chunk_data_objects_for_api): # Added enumerate for unique pseudo ID
@@ -506,18 +530,13 @@ class AgentManager:
                 else:
                     self.log_thinking_process("没有已评分的块可供组装上下文。", "ContextAssemblerAgent", level="WARNING")
             except Exception as e_context:
-                self.log_thinking_process(f"ContextAssemblerAgent 组装上下文时出错: {e_context}", "ContextAssemblerAgent", level="ERROR", error_details=str(e_context), exc_info=True)
+                self.log_thinking_process(f"组装上下文时出错: {e_context}", "ContextAssemblerAgent", level="ERROR")
 
-            self.log_thinking_process("TagRAG_AnswerAgent 开始生成最终答案。", "TagRAG_AnswerAgent")
+            self.log_thinking_process("开始生成最终答案。", "TagRAG_AnswerAgent")
             final_answer_agent_prompt = (
                 f"User Query: {user_query}\\\\n\\\\n"
                 f"Relevant Context:\\\\n{selected_context_for_llm if selected_context_for_llm and selected_context_for_llm.strip() else 'No relevant context found after filtering and scoring.'}\\\\n\\\\n"
                 f"Please answer the user query based on the provided context. If the context is insufficient or irrelevant, state that you cannot answer based on the provided information."
-            )
-            self.log_thinking_process(
-                "发送给LLM用于生成最终答案的Prompt", 
-                "TagRAG_AnswerAgent",
-                final_prompt_details={"full_final_prompt": final_answer_agent_prompt}
             )
 
             if self.final_answer_agent and self.user_proxy and self.llm_client: 
@@ -526,10 +545,10 @@ class AgentManager:
                 final_answer = "Final Answer Agent, User Proxy 或 LLMClient 未初始化。"
                 self.log_thinking_process("FinalAnswerAgent, UserProxy 或 LLMClient 未初始化。", "TagRAG_AnswerAgent", level="ERROR")
             
-            self.log_thinking_process(f"TagRAG_AnswerAgent 生成的最终答案 (前100字符): '{final_answer[:100]}...'", "TagRAG_AnswerAgent", status="Completed", final_answer_preview=final_answer[:100])
+            self.log_thinking_process(f"生成的最终答案 (前100字符): '{final_answer[:100]}...'", "TagRAG_AnswerAgent", status="Completed")
 
         except Exception as e:
-            self.log_thinking_process(f"TagRAG流程中发生意外错误: {e}", "SystemCoordinator", level="CRITICAL", error_details=str(e), exc_info=True)
+            self.log_thinking_process(f"TagRAG流程中发生意外错误: {e}", "SystemCoordinator", level="CRITICAL")
             final_answer = f"处理您的请求时发生内部错误: {str(e)}"
         finally:
             if db_session_created_here and db_session: 
