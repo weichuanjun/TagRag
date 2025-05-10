@@ -219,24 +219,25 @@ class AgentManager:
         else:
             self.log_thinking_process("DB session not available, cannot fetch system tags for T(q) prompt.", "QueryTagGeneratorAgent", level="WARNING")
 
-        prompt = f'''
-用户查询: \"{user_query}\"
+        prompt_template_tq = ("""用户查询: \"{user_query}\"
 
-基于以下【可用标签列表】，请仔细分析用户查询，并选择或生成与用户查询最相关的1-3个关键词或短语作为标签。
+基于以下【可用系统标签参考列表】，请仔细分析用户查询的核心意图和潜在上下文。你的目标是生成一系列最相关的标签，这些标签应具备以下特点：
+1.  **全面性与大局观**: 从不同维度和层级思考，确保标签能捕捉用户查询的多个方面，并反映其核心概念及可能的上下文关联。如果查询涉及多个主题，请为各主要方面提供标签。
+2.  **高质量与精准性**: 每个标签都应具有高信息量，力求精准。
+3.  **优先与创新并存**:
+    *   如果【可用系统标签参考列表】中有与查询意图高度匹配的标签，请优先使用它们。
+    *   即使存在部分相似的已有标签，如果你认为有更精确、更全面或更能体现大局观的新标签能够描述查询意图，请大胆生成新标签。我们鼓励生成能提升后续检索效果和知识关联性的新标签。
+4.  **数量适宜**: 生成的标签数量不必过多，但要确保关键概念得到覆盖。通常建议3-7个标签。
+5.  **相关性**: 所有标签必须与用户查询内容紧密相关。
 
-【重要规则】：
-1. 你必须返回至少一个标签，返回空列表是不允许的。
-2. 如果【可用标签列表】中有直接匹配或高度相关的标签，请优先选择它们。
-3. 对于一般性查询（如项目介绍、系统概述等），若【可用标签列表】中没有匹配项，请生成最相关的新标签。
-4. 返回的标签必须与用户查询内容紧密相关，不要随机选择不相关的标签。
+请以JSON字符串列表的格式返回结果。例如：[\"选择的标签A\", \"新生成的标签B\", \"另一个层面的标签C\"]。
 
-请以JSON字符串列表的格式返回结果。例如：[\"选择的标签1\", \"新生成的标签2\"]。
-
-【可用标签列表】:
+【可用系统标签参考列表】:
 {system_tags_str}
 
-请仅返回有效的JSON字符串列表，并确保列表中包含至少一个与查询紧密相关的标签。
-'''
+请仅返回有效的JSON字符串列表。
+""")
+        prompt = prompt_template_tq.format(user_query=user_query, system_tags_str=system_tags_str)
         
         if not self.llm_client:
             self.log_thinking_process("LLMClient not initialized.", "QueryTagGeneratorAgent", level="ERROR")
@@ -533,10 +534,33 @@ class AgentManager:
                 self.log_thinking_process(f"组装上下文时出错: {e_context}", "ContextAssemblerAgent", level="ERROR")
 
             self.log_thinking_process("开始生成最终答案。", "TagRAG_AnswerAgent")
-            final_answer_agent_prompt = (
-                f"User Query: {user_query}\\\\n\\\\n"
-                f"Relevant Context:\\\\n{selected_context_for_llm if selected_context_for_llm and selected_context_for_llm.strip() else 'No relevant context found after filtering and scoring.'}\\\\n\\\\n"
-                f"Please answer the user query based on the provided context. If the context is insufficient or irrelevant, state that you cannot answer based on the provided information."
+            
+            final_answer_agent_prompt_template = ("""你是一个专业的AI助手，负责根据提供的上下文信息和用户查询，生成一份全面、深入且易于理解的回答。
+
+用户的查询是: \"{user_query}\"
+
+以下是经过筛选和排序的相关上下文信息，每个信息片段都尽可能标记了其来源（例如，文档ID，块索引，或文件名）：
+--- BEGIN CONTEXT ---
+{selected_context_for_llm}
+--- END CONTEXT ---
+
+请遵循以下指引来构建你的回答：
+1.  **核心任务**: 清晰、准确、完整地回答用户查询。
+2.  **深入分析与综合**: 不要简单罗列信息。你需要理解、分析并综合上下文中的信息，形成连贯且有逻辑的答案。如果信息来自多个片段，请努力将它们融合成一个整体性的观点或描述。
+3.  **明确引用来源**: 当你的回答直接或间接依赖于上下文中的特定信息时，必须在相应句子或段落的末尾明确标注引用来源。使用方括号，例如：\"系统支持用户权限管理 [来源: 文档A_chunk2]\" 或 \"根据文档B第3页所述 [来源: 文档B_page3]\"。如果上下文中提供了具体的文档名、ID或块信息，请尽量使用它们。
+4.  **展示推理过程**: 对于非直接陈述性的结论，或者当答案是基于多个信息点综合推断得出时，请简要阐述你的推理逻辑。例如：\"由于上下文片段1指出X，并且片段2显示Y与X相关，因此我们可以推断Z [来源: 片段1, 片段2]\"。
+5.  **全局性与结构化**: 从全局视角组织你的回答，确保逻辑清晰，结构合理。可以使用小标题、列表等形式使回答更易读。
+6.  **专业语气与客观性**: 使用专业、客观的语言。避免主观臆断或没有依据的推测。
+7.  **处理信息不足**: 如果提供的上下文信息不足以完全或准确地回答用户查询的某个方面，请明确指出信息缺失，并可以建议用户提供更具体的问题或说明当前答案的局限性。例如："关于XX的具体实现细节，当前上下文未提供足够信息 [信息来源局限]。"
+8.  **灵活性与相关性**: 根据上下文信息与用户查询的相关度，调整回答的详细程度。对于高度相关的信息，应详细阐述；对于相关度较低但仍有参考价值的信息，可简要提及。
+9.  **避免生硬的直接答案**: 你的回答应该是一段经过思考和组织的论述，而不仅仅是一个词或一个短句的答案。
+
+请现在开始生成你的专业回答。
+""")
+            final_answer_agent_prompt = final_answer_agent_prompt_template.format(
+                user_query=user_query,
+                selected_context_for_llm=(selected_context_for_llm if selected_context_for_llm and selected_context_for_llm.strip() 
+                                        else "当前未找到与查询直接相关的上下文信息。请基于您的通用知识回答，并明确指出这是通用知识。")
             )
 
             if self.final_answer_agent and self.user_proxy and self.llm_client: 

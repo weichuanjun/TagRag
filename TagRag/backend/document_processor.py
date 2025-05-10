@@ -513,7 +513,7 @@ class DocumentProcessor:
             
             if has_invalid_metadata:
                 logger.info("已修复部分文档元数据格式问题")
-                
+
             # 4. Add to Vector Store (现在包含了正确格式的标签信息)
             if langchain_docs_for_vector_store:
                 from vector_store import VectorStore # Ensure import is within reach or global
