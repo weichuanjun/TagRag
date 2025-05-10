@@ -280,33 +280,50 @@ const ChatPage = () => {
 
     return (
         <div style={{
-            display: 'flex', flexDirection: 'column', height: 'calc(100vh - 140px)', // Adjust based on your Layout
-            border: '1px solid #d9d9d9', borderRadius: '4px', padding: '20px'
+            display: 'flex',
+            flexDirection: 'column',
+            height: 'calc(100vh - 120px)',
+            borderRadius: '12px',
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
+            padding: '0',
+            overflow: 'hidden',
+            background: '#fff'
         }}>
 
-            {/* Header Section */}
-            <div style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #f0f0f0' }}>
-                <Title level={4} style={{ margin: 0 }}>智能问答</Title>
-                <Space wrap style={{ marginTop: '10px' }}>
-                    <Tooltip title="选择一个知识库进行问答">
-                        <Select
-                            loading={kbLoading}
-                            value={selectedKnowledgeBase}
-                            style={{ width: 200 }}
-                            onChange={setSelectedKnowledgeBase}
-                            placeholder="选择知识库"
-                        >
-                            {knowledgeBases.map(kb => (
-                                <Option key={kb.id} value={kb.id}>{kb.name}</Option>
-                            ))}
-                        </Select>
-                    </Tooltip>
+            {/* Header Section - 更现代的设计 */}
+            <div style={{
+                padding: '20px 24px',
+                borderBottom: '1px solid #f0f0f0',
+                background: 'linear-gradient(to right, #f7f9fc, #eef2f7)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap'
+            }}>
+                <Title level={4} style={{ margin: 0, color: '#4267B2', fontWeight: '600' }}>智能问答</Title>
+                <Space wrap style={{ marginTop: '0' }}>
+                    <Select
+                        loading={kbLoading}
+                        value={selectedKnowledgeBase}
+                        style={{
+                            width: 200,
+                            borderRadius: '8px',
+                            boxShadow: '0 2px 6px rgba(0, 0, 0, 0.03)'
+                        }}
+                        onChange={setSelectedKnowledgeBase}
+                        placeholder="选择知识库"
+                        dropdownStyle={{ borderRadius: '8px' }}
+                    >
+                        {knowledgeBases.map(kb => (
+                            <Option key={kb.id} value={kb.id}>{kb.name}</Option>
+                        ))}
+                    </Select>
                     <Switch
                         checkedChildren={<><CodeOutlined /> 代码分析</>}
                         unCheckedChildren={<><CodeOutlined /> 代码分析</>}
                         checked={useCodeAnalysis}
                         onChange={setUseCodeAnalysis}
-                        disabled={useTagRag} // Disable if TagRAG is active
+                        disabled={useTagRag}
                     />
                     <Switch
                         checkedChildren={<><AntTagsOutlined /> TagRAG</>}
@@ -314,64 +331,152 @@ const ChatPage = () => {
                         checked={useTagRag}
                         onChange={(checked) => {
                             setUseTagRag(checked);
-                            if (checked) setUseCodeAnalysis(false); // Ensure code analysis is off if TagRAG is on
+                            if (checked) setUseCodeAnalysis(false);
                         }}
                     />
-                    <Button onClick={clearChatHistory} danger>清除聊天记录</Button>
+                    <Button
+                        onClick={clearChatHistory}
+                        danger
+                        style={{
+                            borderRadius: '8px',
+                            boxShadow: '0 2px 6px rgba(0, 0, 0, 0.03)'
+                        }}
+                    >
+                        清除聊天记录
+                    </Button>
                 </Space>
             </div>
 
-            {/* Chat Messages Area */}
-            <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: '20px', paddingRight: '10px' }}>
+            {/* Chat Messages Area - 更现代的聊天气泡设计 */}
+            <div style={{
+                flexGrow: 1,
+                overflowY: 'auto',
+                padding: '20px 24px',
+                background: '#f7f9fc'
+            }}>
                 {messages.map((msg, index) => (
                     <div
                         key={index}
                         style={{
-                            marginBottom: '15px',
-                            textAlign: msg.sender === 'user' ? 'right' : 'left',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: msg.sender === 'user' ? 'flex-end' : 'flex-start',
+                            marginBottom: '24px',
+                            width: '100%'
                         }}
                     >
-                        <div
-                            style={{
-                                display: 'inline-block',
-                                padding: '10px 15px',
-                                borderRadius: '15px',
-                                backgroundColor: msg.sender === 'user' ? '#1890ff' : '#f0f0f0',
-                                color: msg.sender === 'user' ? 'white' : 'black',
-                                maxWidth: '70%',
-                                wordWrap: 'break-word',
-                            }}
-                        >
-                            <ReactMarkdown
-                                components={{
-                                    // Customize rendering if needed, e.g., for code blocks
-                                    code({ node, inline, className, children, ...props }) {
-                                        const match = /language-(\\w+)/.exec(className || '')
-                                        return !inline && match ? (
-                                            // Add syntax highlighting here if you want
-                                            <pre style={{ background: '#2d2d2d', color: '#f8f8f2', padding: '10px', borderRadius: '5px', overflowX: 'auto' }} {...props}>{String(children).replace(/\\n$/, '')}</pre>
-                                        ) : (
-                                            <code className={className} {...props}>
-                                                {children}
-                                            </code>
-                                        )
-                                    }
+                        <div style={{
+                            display: 'flex',
+                            maxWidth: '80%',
+                            width: 'auto'
+                        }}>
+                            {msg.sender === 'ai' && (
+                                <div style={{
+                                    width: '36px',
+                                    height: '36px',
+                                    borderRadius: '50%',
+                                    backgroundColor: '#4267B2',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    marginRight: '12px',
+                                    fontSize: '16px',
+                                    color: 'white',
+                                    fontWeight: 'bold',
+                                    flexShrink: 0,
+                                    minWidth: '36px'
+                                }}>
+                                    T
+                                </div>
+                            )}
+                            <div
+                                style={{
+                                    padding: '14px 18px',
+                                    borderRadius: msg.sender === 'user'
+                                        ? '18px 18px 0 18px'
+                                        : '18px 18px 18px 0',
+                                    backgroundColor: msg.sender === 'user' ? '#4267B2' : 'white',
+                                    color: msg.sender === 'user' ? 'white' : '#333',
+                                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
+                                    wordWrap: 'break-word',
+                                    marginBottom: '4px',
+                                    flexGrow: 1,
+                                    overflow: 'hidden',
+                                    width: 'auto'
                                 }}
                             >
-                                {msg.content}
-                            </ReactMarkdown>
+                                <ReactMarkdown
+                                    components={{
+                                        code({ node, inline, className, children, ...props }) {
+                                            const match = /language-(\\w+)/.exec(className || '')
+                                            return !inline && match ? (
+                                                <pre style={{
+                                                    background: '#2d2d2d',
+                                                    color: '#f8f8f2',
+                                                    padding: '12px',
+                                                    borderRadius: '8px',
+                                                    overflowX: 'auto',
+                                                    marginTop: '10px',
+                                                    marginBottom: '10px',
+                                                    width: '100%'
+                                                }} {...props}>
+                                                    {String(children).replace(/\\n$/, '')}
+                                                </pre>
+                                            ) : (
+                                                <code style={{
+                                                    background: msg.sender === 'user' ? 'rgba(255,255,255,0.2)' : '#f0f2f5',
+                                                    padding: '2px 6px',
+                                                    borderRadius: '4px',
+                                                    fontFamily: 'monospace',
+                                                    wordBreak: 'break-word'
+                                                }} className={className} {...props}>
+                                                    {children}
+                                                </code>
+                                            )
+                                        }
+                                    }}
+                                    className="markdown-content"
+                                >
+                                    {msg.content}
+                                </ReactMarkdown>
+                            </div>
+                            {msg.sender === 'user' && (
+                                <div style={{
+                                    width: '36px',
+                                    height: '36px',
+                                    borderRadius: '50%',
+                                    backgroundColor: '#6c757d',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    marginLeft: '12px',
+                                    fontSize: '16px',
+                                    color: 'white',
+                                    fontWeight: 'bold',
+                                    flexShrink: 0,
+                                    minWidth: '36px'
+                                }}>
+                                    U
+                                </div>
+                            )}
                         </div>
-                        <div style={{ fontSize: '11px', color: '#aaa', marginTop: '3px' }}>
+
+                        <div style={{
+                            fontSize: '11px',
+                            color: '#9aa0a6',
+                            marginTop: '4px',
+                            marginLeft: msg.sender === 'ai' ? '48px' : '0',
+                            marginRight: msg.sender === 'user' ? '48px' : '0'
+                        }}>
                             {new Date(msg.timestamp).toLocaleTimeString()}
                         </div>
 
                         {/* Render Referenced Tags and Excerpts for AI messages */}
                         {msg.sender === 'ai' && (
                             <div style={{
-                                textAlign: 'left', // Ensure these are left-aligned under AI message
-                                maxWidth: '70%', // Match message width
-                                marginLeft: msg.sender === 'user' ? 'auto' : '0', // Align with AI bubble
-                                marginRight: msg.sender === 'user' ? '0' : 'auto' // Align with AI bubble
+                                maxWidth: '80%',
+                                marginLeft: '48px',
+                                marginTop: '8px'
                             }}>
                                 <ReferencedTags tags={msg.referenced_tags} />
                                 <ReferencedExcerpts excerpts={msg.referenced_excerpts} />
@@ -380,11 +485,16 @@ const ChatPage = () => {
 
                         {/* Thinking Process Collapse for AI messages */}
                         {msg.sender === 'ai' && msg.hasThinkingProcess && thinkingProcess[index] && (
-                            <Collapse ghost style={{
-                                maxWidth: '70%', marginTop: '5px',
-                                marginLeft: msg.sender === 'user' ? 'auto' : '0',
-                                marginRight: msg.sender === 'user' ? '0' : 'auto'
-                            }}>
+                            <Collapse
+                                ghost
+                                style={{
+                                    maxWidth: '80%',
+                                    marginTop: '8px',
+                                    marginLeft: '48px',
+                                    borderRadius: '8px',
+                                    overflow: 'hidden'
+                                }}
+                            >
                                 {renderThinkingProcess(thinkingProcess[index], `msg-${index}`)}
                             </Collapse>
                         )}
@@ -393,15 +503,27 @@ const ChatPage = () => {
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Area */}
-            <div style={{ display: 'flex', borderTop: '1px solid #f0f0f0', paddingTop: '15px' }}>
+            {/* Input Area - 更现代的输入框设计 */}
+            <div style={{
+                display: 'flex',
+                borderTop: '1px solid #f0f0f0',
+                padding: '16px 24px',
+                background: 'white'
+            }}>
                 <TextArea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyPress={handleKeyPress}
                     placeholder="输入您的问题..."
                     autoSize={{ minRows: 1, maxRows: 4 }}
-                    style={{ marginRight: '10px' }}
+                    style={{
+                        marginRight: '12px',
+                        borderRadius: '18px',
+                        padding: '12px 18px',
+                        resize: 'none',
+                        boxShadow: '0 2px 6px rgba(0, 0, 0, 0.05)',
+                        border: '1px solid #e0e5eb'
+                    }}
                     disabled={loading}
                 />
                 <Button
@@ -410,9 +532,16 @@ const ChatPage = () => {
                     onClick={sendMessage}
                     loading={loading}
                     disabled={!selectedKnowledgeBase && kbLoading}
-                >
-                    发送
-                </Button>
+                    style={{
+                        borderRadius: '50%',
+                        width: '48px',
+                        height: '48px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 4px 12px rgba(66, 103, 178, 0.2)'
+                    }}
+                />
             </div>
         </div>
     );

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Routes, Route, Link, Navigate } from 'react-router-dom';
 import { Layout, Menu, ConfigProvider, theme, Typography } from 'antd';
 import {
@@ -39,11 +39,25 @@ const { Content, Footer, Sider } = Layout;
 const { Title } = Typography;
 
 function App() {
+    const [collapsed, setCollapsed] = useState(false);
+
     return (
         <Layout style={{ minHeight: '100vh' }}>
             <Sider
                 breakpoint="lg"
                 collapsedWidth="0"
+                collapsed={collapsed}
+                onCollapse={(collapsed) => setCollapsed(collapsed)}
+                style={{
+                    overflow: 'auto',
+                    height: '100vh',
+                    position: 'fixed',
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    zIndex: 1000,
+                    transition: 'all 0.2s'
+                }}
             >
                 <div style={{
                     padding: '16px 24px',
@@ -89,7 +103,10 @@ function App() {
                     </Menu.Item> */}
                 </Menu>
             </Sider>
-            <Layout className="site-layout">
+            <Layout className="site-layout" style={{
+                marginLeft: collapsed ? 0 : 200,
+                transition: 'margin-left 0.2s'
+            }}>
                 <Content style={{ margin: '0 16px' }}>
                     <div className="site-layout-background" style={{ padding: 24, minHeight: 360 }}>
                         <Routes>
@@ -106,7 +123,15 @@ function App() {
                         </Routes>
                     </div>
                 </Content>
-                <Footer style={{ textAlign: 'center' }}>TagRAG ©2025 WEICHUANJUN</Footer>
+                <Footer style={{
+                    textAlign: 'center',
+                    padding: '10px 50px',
+                    height: '40px',
+                    lineHeight: '20px',
+                    fontSize: '14px',
+                    backgroundColor: '#f7f9fc',
+                    borderTop: '1px solid #e8e8e8'
+                }}>TagRAG ©2025 WEICHUANJUN</Footer>
             </Layout>
         </Layout>
     );

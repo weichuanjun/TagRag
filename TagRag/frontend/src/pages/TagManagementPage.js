@@ -285,11 +285,6 @@ const TagManagementPage = () => {
 
     return (
         <div>
-            <Title level={4}>标签管理</Title>
-            <Text type="secondary">
-                管理系统中的标签，用于对文档和代码进行分类
-            </Text>
-
             <Card style={{ marginTop: 16 }}
                 extra={
                     <Button

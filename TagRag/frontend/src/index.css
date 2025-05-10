@@ -110,6 +110,14 @@ code {
 .markdown-content {
     font-size: 16px;
     line-height: 1.6;
+    width: 100%;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.markdown-content img {
+    max-width: 100%;
+    height: auto;
 }
 
 .markdown-content pre {
@@ -117,6 +125,12 @@ code {
     padding: 16px;
     border-radius: 4px;
     overflow-x: auto;
+    max-width: 100%;
+}
+
+.markdown-content code {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    white-space: pre-wrap;
 }
 
 .markdown-content table {

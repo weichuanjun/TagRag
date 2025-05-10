@@ -571,13 +571,18 @@ class AgentManager:
             retrieval_context = ""
             for i, result in enumerate(retrieval_results):
                 retrieval_context += f"文档 {i+1}:\n"
-                retrieval_context += f"内容: {result['content']}\n"
-                retrieval_context += f"来源: {result['metadata'].get('source', '未知')}\n"
-                if 'sheet_name' in result['metadata']:
-                    retrieval_context += f"工作表: {result['metadata']['sheet_name']}\n"
+                # 添加键存在性检查，避免KeyError
+                content = result.get('content', result.get('text', '无内容'))
+                retrieval_context += f"内容: {content}\n"
+                
+                # 确保metadata存在
+                metadata = result.get('metadata', {})
+                retrieval_context += f"来源: {metadata.get('source', '未知')}\n"
+                if metadata.get('sheet_name'):
+                    retrieval_context += f"工作表: {metadata['sheet_name']}\n"
                 retrieval_context += f"相关度得分: {result.get('score', 'N/A')}\n"
-                if 'knowledge_base_id' in result['metadata']:
-                    retrieval_context += f"知识库ID: {result['metadata']['knowledge_base_id']}\n"
+                if metadata.get('knowledge_base_id'):
+                    retrieval_context += f"知识库ID: {metadata['knowledge_base_id']}\n"
                 retrieval_context += "\n"
             
             code_analysis_context = ""

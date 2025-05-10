@@ -218,52 +218,84 @@ const FileUploadPage = () => {
 
     // 表格列定义 (新的)
     const documentTableColumns = [
-        { title: 'ID', dataIndex: 'id', key: 'id', width: 60, sorter: (a, b) => a.id - b.id, defaultSortOrder: 'descend' },
-        { title: '文件名', dataIndex: 'source', key: 'source', ellipsis: true },
         {
-            title: '知识库',
-            dataIndex: 'knowledge_base_name',
-            key: 'knowledge_base_name',
-            render: (name) => name || 'N/A',
+            title: 'ID',
+            dataIndex: 'id',
+            key: 'id',
+            width: 60,
+            sorter: (a, b) => a.id - b.id,
+            defaultSortOrder: 'descend'
+        },
+        {
+            title: '文件名',
+            dataIndex: 'source',
+            key: 'source',
+            width: 240,
+            ellipsis: false,
+            render: (text) => (
+                <div style={{
+                    fontSize: '12px',
+                    lineHeight: '1.4',
+                    wordBreak: 'break-all',
+                    wordWrap: 'break-word'
+                }}>
+                    {text}
+                </div>
+            )
         },
         {
             title: '标签',
             key: 'tags',
             dataIndex: 'tags',
             render: (tagsArray, record) => (
-                <Space direction="vertical" style={{ width: '100%' }}>
-                    <div>
-                        {Array.isArray(tagsArray) && tagsArray.length > 0 ?
-                            tagsArray.map(tag => (
-                                <Tag color={tag.color || 'blue'} key={tag.id} style={{ marginBottom: '4px' }}>
-                                    {tag.name}
-                                </Tag>
-                            ))
-                            : <Text type="secondary" italic>无标签</Text>
-                        }
-                    </div>
-                    {record && record.id && (
-                        <Button
-                            icon={<TagOutlined />}
-                            size="small"
-                            onClick={() => openTagModal(record)}
-                            style={{ marginTop: '4px' }}
-                        >
-                            编辑标签
-                        </Button>
-                    )}
+                <Space size={[0, 4]} wrap>
+                    {Array.isArray(tagsArray) && tagsArray.length > 0 ?
+                        tagsArray.map(tag => (
+                            <Tag color={tag.color || 'blue'} key={tag.id}>
+                                {tag.name}
+                            </Tag>
+                        ))
+                        : <Text type="secondary" italic>无标签</Text>
+                    }
+                    <Button
+                        icon={<TagOutlined />}
+                        size="small"
+                        type="text"
+                        onClick={() => openTagModal(record)}
+                    />
                 </Space>
             ),
         },
-        { title: '状态', dataIndex: 'status', key: 'status', width: 120 },
-        { title: '处理时间', dataIndex: 'processed_at', key: 'processed_at', render: (text) => text ? new Date(text).toLocaleString() : 'N/A', width: 150 },
+        {
+            title: '知识库',
+            dataIndex: 'knowledge_base_name',
+            key: 'knowledge_base_name',
+            width: 120,
+            render: (name) => name || 'N/A',
+        },
+        {
+            title: '状态与时间',
+            key: 'statusTime',
+            width: 150,
+            render: (_, record) => (
+                <Space direction="vertical" size="small">
+                    <Tag color={record.status === 'processed' ? 'green' : 'blue'}>
+                        {record.status || 'N/A'}
+                    </Tag>
+                    <Text type="secondary" style={{ fontSize: '12px' }}>
+                        {record.processed_at ? new Date(record.processed_at).toLocaleString() : 'N/A'}
+                    </Text>
+                </Space>
+            )
+        },
         {
             title: '操作',
             key: 'actions',
-            width: 220,
-            render: (text, record) => (
+            width: 80,
+            align: 'center',
+            render: (_, record) => (
                 <Space>
-                    <Button icon={<EyeOutlined />} onClick={() => handleViewChunks(record)}>查看分块</Button>
+                    <Button type="text" icon={<EyeOutlined />} onClick={() => handleViewChunks(record)} />
                     <Popconfirm
                         title={`确定删除文档 "${record.source}"?`}
                         onConfirm={() => handleDeleteDocument(record.id)}
@@ -271,7 +303,7 @@ const FileUploadPage = () => {
                         cancelText="取消"
                         okButtonProps={{ danger: true }}
                     >
-                        <Button danger icon={<DeleteOutlined />}>删除</Button>
+                        <Button type="text" danger icon={<DeleteOutlined />} />
                     </Popconfirm>
                 </Space>
             ),
@@ -298,21 +330,26 @@ const FileUploadPage = () => {
 
     return (
         <div style={{ padding: '20px' }}>
-            <Title level={4}>文档上传与管理</Title>
             <Row gutter={[16, 16]}>
                 <Col xs={24} md={24}>
-                    <Card title="通过文件上传">
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                            <Select
-                                style={{ width: '100%' }}
-                                placeholder="选择知识库"
-                                value={selectedKnowledgeBase}
-                                onChange={setSelectedKnowledgeBase}
-                                loading={kbLoading}
-                            >
-                                {knowledgeBases.map(kb => <Option key={kb.id} value={kb.id}>{kb.name}</Option>)}
-                            </Select>
-                            <InputNumber addonBefore="分块大小" min={100} max={5000} value={chunkSize} onChange={setChunkSize} style={{ width: '100%' }} />
+                    <Card style={{ borderRadius: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                        <Row gutter={16} align="middle">
+                            <Col xs={24} md={16}>
+                                <Select
+                                    style={{ width: '100%' }}
+                                    placeholder="选择知识库"
+                                    value={selectedKnowledgeBase}
+                                    onChange={setSelectedKnowledgeBase}
+                                    loading={kbLoading}
+                                >
+                                    {knowledgeBases.map(kb => <Option key={kb.id} value={kb.id}>{kb.name}</Option>)}
+                                </Select>
+                            </Col>
+                            <Col xs={24} md={8}>
+                                <InputNumber addonBefore="分块大小" min={100} max={5000} value={chunkSize} onChange={setChunkSize} style={{ width: '100%' }} />
+                            </Col>
+                        </Row>
+                        <div style={{ marginTop: '16px', minHeight: '120px', maxHeight: '180px' }}>
                             <Dragger
                                 key={draggerKey}
                                 name="file"
@@ -321,38 +358,70 @@ const FileUploadPage = () => {
                                 customRequest={customUpload}
                                 showUploadList={true}
                                 disabled={uploading || !selectedKnowledgeBase}
+                                style={{
+                                    padding: '10px 0',
+                                    borderRadius: '8px',
+                                    background: '#f9fafc'
+                                }}
+                                height={140}
                             >
-                                <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-                                <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
-                                <p className="ant-upload-hint">支持单个或批量上传。支持TXT, PDF, Excel, Markdown等。</p>
+                                <p className="ant-upload-drag-icon"><InboxOutlined style={{ color: '#4267B2', fontSize: '32px' }} /></p>
+                                <p className="ant-upload-text" style={{ fontSize: '16px', fontWeight: '500', color: '#333' }}>点击或拖拽文件到此区域上传</p>
+                                <p className="ant-upload-hint" style={{ padding: '0 40px', color: '#888', fontSize: '13px' }}>支持TXT, PDF, Excel, Markdown等</p>
                             </Dragger>
                             {uploading && <Spin tip="上传处理中..." style={{ display: 'block', marginTop: '10px' }} />}
-                        </Space>
+                        </div>
                     </Card>
                 </Col>
             </Row>
 
-            <Divider>已处理文档列表</Divider>
+            <Divider style={{ margin: '24px 0 16px 0' }}>已处理文档列表</Divider>
 
-            <Table
-                columns={documentTableColumns}
-                dataSource={documents}
-                loading={loadingDocuments}
-                rowKey="id"
-                bordered
-                size="small"
-                style={{ marginTop: 20 }}
-                title={() => <Button onClick={fetchDocuments} loading={loadingDocuments}>刷新列表</Button>}
-            />
+            <div style={{ padding: '0 10px' }}>
+                <Table
+                    columns={documentTableColumns}
+                    dataSource={documents}
+                    loading={loadingDocuments}
+                    rowKey="id"
+                    bordered
+                    size="small"
+                    style={{
+                        marginTop: 20,
+                        borderRadius: '8px',
+                        overflow: 'hidden',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                    }}
+                    title={() => (
+                        <div style={{ padding: '8px 0' }}>
+                            <Button
+                                onClick={fetchDocuments}
+                                loading={loadingDocuments}
+                                type="primary"
+                                size="small"
+                                style={{ borderRadius: '4px' }}
+                            >
+                                刷新列表
+                            </Button>
+                        </div>
+                    )}
+                    scroll={{ x: 1000 }}
+                    pagination={{
+                        size: 'small',
+                        showSizeChanger: true,
+                        showTotal: (total) => `共 ${total} 条记录`
+                    }}
+                />
+            </div>
 
             {/* 分块信息模态框 */}
             <Modal
-                title={`文档分块详情: ${selectedDocForChunks?.source || 'N/A'} (ID: ${selectedDocForChunks?.id})`}
+                title={`文档分块详情: ${selectedDocForChunks?.source || 'N/A'}`}
                 visible={isChunkModalVisible}
                 onCancel={handleCancelChunkModal}
                 footer={[<Button key="back" onClick={handleCancelChunkModal}>关闭</Button>]}
-                width="85%"
+                width="80%"
                 destroyOnClose
+                bodyStyle={{ padding: '12px' }}
             >
                 {chunksLoading ? (
                     <div style={{ textAlign: 'center', padding: '50px' }}><Spin tip="加载分块信息..." /></div>
@@ -361,22 +430,40 @@ const FileUploadPage = () => {
                         itemLayout="vertical"
                         size="small"
                         dataSource={selectedDocChunks}
-                        pagination={{ pageSize: 3, size: 'small' }}
+                        pagination={{ pageSize: 5, size: 'small' }}
                         renderItem={(chunk) => (
-                            <List.Item key={chunk.chunk_index} style={{ background: '#fafafa', marginBottom: '8px', padding: '12px', borderRadius: '4px' }}>
+                            <List.Item key={chunk.chunk_index} style={{ background: '#f7f9fc', marginBottom: '8px', padding: '12px', borderRadius: '8px' }}>
                                 <List.Item.Meta
-                                    title={<Text strong>块 {chunk.chunk_index} (Chunk ID: {chunk.id})</Text>}
+                                    title={<Text strong>块 {chunk.chunk_index}</Text>}
                                     description={
-                                        <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                                            <Space wrap>
-                                                <Text type="secondary">Token数: {chunk.token_count || 'N/A'}</Text>
-                                                <Text type="secondary">结构类型: {chunk.structural_type || 'N/A'}</Text>
-                                            </Space>
-                                            <div><Text strong style={{ marginRight: 8 }}>标签:</Text>{renderChunkTagsInModal(chunk.metadata)}</div>
-                                        </Space>
+                                        <Row gutter={[8, 8]}>
+                                            <Col span={24} md={12}>
+                                                <Space>
+                                                    <Tag color="cyan">Token: {chunk.token_count || 'N/A'}</Tag>
+                                                    <Tag color="purple">类型: {chunk.structural_type || 'N/A'}</Tag>
+                                                </Space>
+                                            </Col>
+                                            <Col span={24} md={12}>
+                                                <Space align="start">
+                                                    <TagOutlined style={{ marginTop: '4px' }} />
+                                                    {renderChunkTagsInModal(chunk.metadata)}
+                                                </Space>
+                                            </Col>
+                                        </Row>
                                     }
                                 />
-                                <Paragraph ellipsis={{ rows: 4, expandable: true, symbol: '展开' }} style={{ maxHeight: '150px', overflowY: 'auto', background: '#fff', padding: '8px', border: '1px solid #eee' }}>
+                                <Paragraph
+                                    ellipsis={{ rows: 4, expandable: true, symbol: '展开' }}
+                                    style={{
+                                        maxHeight: '150px',
+                                        overflowY: 'auto',
+                                        background: '#fff',
+                                        padding: '12px',
+                                        border: '1px solid #eee',
+                                        borderRadius: '6px',
+                                        marginTop: '8px'
+                                    }}
+                                >
                                     {chunk.content}
                                 </Paragraph>
                             </List.Item>
@@ -385,30 +472,38 @@ const FileUploadPage = () => {
                 )}
             </Modal>
 
-            {/* 手动编辑标签模态框 (复用您现有的) */}
+            {/* 手动编辑标签模态框 */}
             <Modal
-                title={`编辑文档 #${selectedDocumentIdForTagging} 的标签`}
+                title={`编辑标签`}
                 visible={tagModalVisible}
                 onOk={saveDocumentTags}
                 onCancel={() => setTagModalVisible(false)}
                 confirmLoading={tagsLoading}
+                width={500}
             >
-                <Select
-                    mode="multiple"
-                    allowClear
-                    style={{ width: '100%' }}
-                    placeholder="选择或搜索标签"
-                    value={currentSelectedTagsForDoc}
-                    onChange={handleTagChangeForModal}
-                    loading={tagsLoading}
-                    filterOption={(input, option) =>
-                        option.children.toLowerCase().includes(input.toLowerCase())
-                    }
-                >
-                    {allTags.map(tag => (
-                        <Option key={tag.id} value={tag.id}>{tag.name}</Option>
-                    ))}
-                </Select>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                    <Text type="secondary">为文档选择标签：</Text>
+                    <Select
+                        mode="multiple"
+                        allowClear
+                        style={{ width: '100%' }}
+                        placeholder="选择或搜索标签"
+                        value={currentSelectedTagsForDoc}
+                        onChange={handleTagChangeForModal}
+                        loading={tagsLoading}
+                        optionFilterProp="children"
+                        filterOption={(input, option) =>
+                            option.children.toLowerCase().includes(input.toLowerCase())
+                        }
+                    >
+                        {allTags.map(tag => (
+                            <Option key={tag.id} value={tag.id}>{tag.name}</Option>
+                        ))}
+                    </Select>
+                    <div style={{ marginTop: '12px' }}>
+                        <Text type="secondary">已选择 {currentSelectedTagsForDoc.length} 个标签</Text>
+                    </div>
+                </Space>
             </Modal>
 
         </div>

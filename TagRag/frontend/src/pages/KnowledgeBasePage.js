@@ -234,7 +234,6 @@ const KnowledgeBasePage = () => {
     return (
         <div className="knowledge-base-page">
             <Card
-                title={<Title level={4}>知识库管理</Title>}
                 extra={
                     <Button
                         type="primary"

@@ -354,7 +354,6 @@ const GraphVisualizerPage = () => {
             <Card
                 title={
                     <Space>
-                        <span>知识图谱可视化</span>
                         {selectedKnowledgeBase && (
                             <Tag color="blue">
                                 {knowledgeBases.find(kb => kb.id === selectedKnowledgeBase)?.name || ''}
