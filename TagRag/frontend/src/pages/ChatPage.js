@@ -3,6 +3,8 @@ import { Input, Button, Spin, Switch, Typography, Space, Divider, message, Colla
 import { SendOutlined, CodeOutlined, InfoCircleOutlined, DatabaseOutlined, TagsOutlined as AntTagsOutlined, SnippetsOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
+// 导入代码结果显示组件
+import CodeRAGResults from './CodeRAGResults';
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
@@ -18,10 +20,10 @@ const ReferencedTags = ({ tags }) => {
         return null;
     }
     return (
-        <div style={{ marginTop: '10px', marginBottom: '5px' }}>
-            <Text strong><AntTagsOutlined /> 引用的标签: </Text>
+        <div style={{ marginTop: '8px', marginBottom: '4px', fontSize: '13px' }}>
+            <Text strong style={{ fontSize: '13px' }}><AntTagsOutlined /> 引用的标签: </Text>
             {tags.map(tag => (
-                <Tag key={tag.id} color="blue" style={{ margin: '2px' }}>
+                <Tag key={tag.id} color="blue" style={{ margin: '2px', fontSize: '12px' }}>
                     {tag.name}
                 </Tag>
             ))}
@@ -34,14 +36,14 @@ const ReferencedExcerpts = ({ excerpts }) => {
         return null;
     }
     return (
-        <div style={{ marginTop: '10px', marginBottom: '10px' }}>
-            <Text strong><SnippetsOutlined /> 引用的文档片段: </Text>
-            <Collapse accordion size="small" bordered={false} style={{ marginTop: '5px' }}>
+        <div style={{ marginTop: '8px', marginBottom: '8px', fontSize: '13px' }}>
+            <Text strong style={{ fontSize: '13px' }}><SnippetsOutlined /> 引用的文档片段: </Text>
+            <Collapse accordion size="small" bordered={false} style={{ marginTop: '4px', fontSize: '12px' }}>
                 {excerpts.map((excerpt, index) => (
                     <Panel
                         header={
                             <Tooltip title={excerpt.content || '无内容'}>
-                                <Text ellipsis style={{ maxWidth: 'calc(100% - 30px)' }}>
+                                <Text ellipsis style={{ maxWidth: 'calc(100% - 30px)', fontSize: '12px' }}>
                                     {`片段 ${index + 1}: ${excerpt.document_source || '未知来源'} (相关性: ${excerpt.score !== null && typeof excerpt.score !== 'undefined' ? excerpt.score.toFixed(2) : 'N/A'})`}
                                 </Text>
                             </Tooltip>
@@ -49,7 +51,7 @@ const ReferencedExcerpts = ({ excerpts }) => {
                         key={excerpt.chunk_id || `excerpt-${index}`}
                         style={{ fontSize: '12px' }}
                     >
-                        <div style={{ maxHeight: '150px', overflowY: 'auto', paddingRight: '10px' }}>
+                        <div style={{ maxHeight: '150px', overflowY: 'auto', paddingRight: '10px', fontSize: '12px' }}>
                             <ReactMarkdown>{excerpt.content || '无内容'}</ReactMarkdown>
                         </div>
                         {excerpt.page_number && <Text type="secondary" style={{ fontSize: '11px' }}>页码: {excerpt.page_number}</Text>}
@@ -72,7 +74,8 @@ const ChatPage = () => {
                 return (parsedData.messages || []).map(msg => ({
                     ...msg,
                     referenced_tags: msg.referenced_tags || [],
-                    referenced_excerpts: msg.referenced_excerpts || []
+                    referenced_excerpts: msg.referenced_excerpts || [],
+                    code_snippets: msg.code_snippets || [] // 确保代码片段字段存在
                 }));
             }
         } catch (error) {
@@ -85,12 +88,16 @@ const ChatPage = () => {
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [useCodeAnalysis, setUseCodeAnalysis] = useState(false);
+    const [useCodeRetrieval, setUseCodeRetrieval] = useState(false); // 新增状态：是否启用代码检索
     const [useTagRag, setUseTagRag] = useState(true); // Default to true for TagRAG
     const [thinkingProcess, setThinkingProcess] = useState({}); // Store thinking process per message index
     const [knowledgeBases, setKnowledgeBases] = useState([]);
     const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
     const [kbLoading, setKbLoading] = useState(false);
     const [agentPrompts, setAgentPrompts] = useState([]);
+    const [repositories, setRepositories] = useState([]); // 新增：代码仓库列表
+    const [selectedRepository, setSelectedRepository] = useState(null); // 新增：选择的代码仓库
+    const [repoLoading, setRepoLoading] = useState(false); // 新增：仓库加载状态
     const messagesEndRef = useRef(null);
 
     // 缓存聊天记录到localStorage
@@ -123,9 +130,27 @@ const ChatPage = () => {
         }
     };
 
-    // 组件加载时获取知识库列表
+    // 获取代码仓库列表
+    const fetchRepositories = async () => {
+        setRepoLoading(true);
+        try {
+            const response = await axios.get('/code/repositories');
+            setRepositories(response.data || []);
+            if (response.data && response.data.length > 0) {
+                setSelectedRepository(response.data[0].id);
+            }
+        } catch (error) {
+            console.error('获取代码仓库列表失败:', error);
+            message.error('获取代码仓库列表失败');
+        } finally {
+            setRepoLoading(false);
+        }
+    };
+
+    // 组件加载时获取知识库和代码仓库列表
     useEffect(() => {
         fetchKnowledgeBases();
+        fetchRepositories(); // 添加获取代码仓库的调用
     }, []);
 
     // 当知识库变化时，加载对应的提示词
@@ -212,6 +237,8 @@ const ChatPage = () => {
                 knowledge_base_id: selectedKnowledgeBase,
                 use_code_analysis: useCodeAnalysis,
                 use_tag_rag: useTagRag,
+                use_code_retrieval: useCodeRetrieval, // 添加代码检索参数
+                repository_id: useCodeRetrieval ? selectedRepository : null, // 仅在启用代码检索时传递仓库ID
                 prompt_configs: promptConfigs
             };
 
@@ -235,7 +262,8 @@ const ChatPage = () => {
                 hasThinkingProcess: thinkingProcessForMessage && thinkingProcessForMessage.length > 0,
                 // Add new fields from TagRAGChatResponse
                 referenced_tags: response.data.referenced_tags || [],
-                referenced_excerpts: response.data.referenced_excerpts || []
+                referenced_excerpts: response.data.referenced_excerpts || [],
+                code_snippets: response.data.code_snippets || [] // 添加代码片段
             };
 
             setMessages(prev => [...prev, aiMessage]);
@@ -247,7 +275,8 @@ const ChatPage = () => {
                 sender: 'ai',
                 timestamp: new Date().toISOString(),
                 referenced_tags: [],
-                referenced_excerpts: []
+                referenced_excerpts: [],
+                code_snippets: []
             };
             setMessages(prev => [...prev, errorMessage]);
         } finally {
@@ -265,20 +294,18 @@ const ChatPage = () => {
 
     // 渲染思考过程
     const renderThinkingProcess = (processArray, messageKey) => {
-        if (!processArray || processArray.length === 0) return null;
-        // ... (rest of renderThinkingProcess logic remains largely the same but operates on processArray) ...
-        // For brevity, assuming the internal mapping logic of renderThinkingProcess is correct
+        // This is a helper function that will be called when rendering a specific thinking process
         // and can operate on the 'processArray' passed to it.
         // Ensure unique keys for Collapse Panels if multiple thinking processes are on page.
         return (
-            <Collapse.Panel header="查看思考过程" key={`tp-${messageKey}`}>
-                <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', fontSize: '12px' }}>
+            <Collapse.Panel header="查看思考过程" key={`tp-${messageKey}`} style={{ fontSize: '12px' }}>
+                <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', fontSize: '11px' }}>
                     {processArray.map((step, idx) => {
                         // ... (logic to format each step, as previously designed) ...
                         // simplified for this diff
-                        return <div key={idx} style={{ color: step.error ? 'red' : 'inherit', marginBottom: '5px', paddingBottom: '5px', borderBottom: '1px dashed #eee' }}>
+                        return <div key={idx} style={{ color: step.error ? 'red' : 'inherit', marginBottom: '4px', paddingBottom: '4px', borderBottom: '1px dashed #eee', fontSize: '11px' }}>
                             <strong>{step.agent || step.task || step.operation || 'Log'}:</strong> {step.step_info || step.info || step.error || step.warning || JSON.stringify(step)}
-                            {step.details && <div style={{ fontSize: '11px', color: '#777' }}>Details: {typeof step.details === 'object' ? JSON.stringify(step.details) : step.details}</div>}
+                            {step.details && <div style={{ fontSize: '10px', color: '#777' }}>Details: {typeof step.details === 'object' ? JSON.stringify(step.details) : step.details}</div>}
                             {/* Add more detailed rendering for specific keys if needed */}
                         </div>;
                     })}
@@ -291,7 +318,7 @@ const ChatPage = () => {
         <div style={{
             display: 'flex',
             flexDirection: 'column',
-            height: 'calc(100vh - 120px)',
+            height: 'calc(100vh - 64px)',
             borderRadius: '12px',
             boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
             padding: '0',
@@ -327,6 +354,46 @@ const ChatPage = () => {
                             <Option key={kb.id} value={kb.id}>{kb.name}</Option>
                         ))}
                     </Select>
+
+                    {/* 添加代码仓库选择下拉框 */}
+                    {useCodeRetrieval && (
+                        <Select
+                            loading={repoLoading}
+                            value={selectedRepository}
+                            style={{
+                                width: 200,
+                                borderRadius: '8px',
+                                boxShadow: '0 2px 6px rgba(0, 0, 0, 0.03)'
+                            }}
+                            onChange={setSelectedRepository}
+                            placeholder="选择代码仓库"
+                            dropdownStyle={{ borderRadius: '8px' }}
+                        >
+                            {repositories.map(repo => (
+                                <Option key={repo.id} value={repo.id}>{repo.name}</Option>
+                            ))}
+                        </Select>
+                    )}
+
+                    {/* 修改代码分析开关，使其独立于TagRAG */}
+                    <Switch
+                        checkedChildren={<><CodeOutlined /> 代码检索</>}
+                        unCheckedChildren={<><CodeOutlined /> 代码检索</>}
+                        checked={useCodeRetrieval}
+                        onChange={(checked) => {
+                            setUseCodeRetrieval(checked);
+                            // 如果启用了代码检索但没有选择仓库，提示用户
+                            if (checked && (!repositories.length || !selectedRepository)) {
+                                message.warning('请确保选择了代码仓库');
+                                // 首次打开时自动获取仓库列表
+                                if (!repositories.length) {
+                                    fetchRepositories();
+                                }
+                            }
+                        }}
+                    />
+
+                    {/* 保留原有代码分析开关，但仅在非TagRAG模式下可用 */}
                     <Switch
                         checkedChildren={<><CodeOutlined /> 代码分析</>}
                         unCheckedChildren={<><CodeOutlined /> 代码分析</>}
@@ -334,6 +401,7 @@ const ChatPage = () => {
                         onChange={setUseCodeAnalysis}
                         disabled={useTagRag}
                     />
+
                     <Switch
                         checkedChildren={<><AntTagsOutlined /> TagRAG</>}
                         unCheckedChildren={<><AntTagsOutlined /> TagRAG</>}
@@ -341,6 +409,7 @@ const ChatPage = () => {
                         onChange={(checked) => {
                             setUseTagRag(checked);
                             if (checked) setUseCodeAnalysis(false);
+                            // 代码检索功能与TagRAG模式独立
                         }}
                     />
                     <Button
@@ -360,7 +429,7 @@ const ChatPage = () => {
             <div style={{
                 flexGrow: 1,
                 overflowY: 'auto',
-                padding: '20px 24px',
+                padding: '16px 20px',
                 background: '#f7f9fc'
             }}>
                 {messages.map((msg, index) => (
@@ -370,7 +439,7 @@ const ChatPage = () => {
                             display: 'flex',
                             flexDirection: 'column',
                             alignItems: msg.sender === 'user' ? 'flex-end' : 'flex-start',
-                            marginBottom: '24px',
+                            marginBottom: '20px',
                             width: '100%'
                         }}
                     >
@@ -422,22 +491,24 @@ const ChatPage = () => {
                                                 <pre style={{
                                                     background: '#2d2d2d',
                                                     color: '#f8f8f2',
-                                                    padding: '12px',
+                                                    padding: '10px',
                                                     borderRadius: '8px',
                                                     overflowX: 'auto',
-                                                    marginTop: '10px',
-                                                    marginBottom: '10px',
-                                                    width: '100%'
+                                                    marginTop: '8px',
+                                                    marginBottom: '8px',
+                                                    width: '100%',
+                                                    fontSize: '13px'
                                                 }} {...props}>
                                                     {String(children).replace(/\\n$/, '')}
                                                 </pre>
                                             ) : (
                                                 <code style={{
                                                     background: msg.sender === 'user' ? 'rgba(255,255,255,0.2)' : '#f0f2f5',
-                                                    padding: '2px 6px',
+                                                    padding: '2px 4px',
                                                     borderRadius: '4px',
                                                     fontFamily: 'monospace',
-                                                    wordBreak: 'break-word'
+                                                    wordBreak: 'break-word',
+                                                    fontSize: '13px'
                                                 }} className={className} {...props}>
                                                     {children}
                                                 </code>
@@ -485,10 +556,15 @@ const ChatPage = () => {
                             <div style={{
                                 maxWidth: '80%',
                                 marginLeft: '48px',
-                                marginTop: '8px'
+                                marginTop: '6px',
+                                fontSize: '13px'
                             }}>
                                 <ReferencedTags tags={msg.referenced_tags} />
                                 <ReferencedExcerpts excerpts={msg.referenced_excerpts} />
+                                {/* 添加代码片段展示 */}
+                                {msg.code_snippets && msg.code_snippets.length > 0 && (
+                                    <CodeRAGResults codeSnippets={msg.code_snippets} />
+                                )}
                             </div>
                         )}
 
@@ -498,10 +574,11 @@ const ChatPage = () => {
                                 ghost
                                 style={{
                                     maxWidth: '80%',
-                                    marginTop: '8px',
+                                    marginTop: '6px',
                                     marginLeft: '48px',
                                     borderRadius: '8px',
-                                    overflow: 'hidden'
+                                    overflow: 'hidden',
+                                    fontSize: '13px'
                                 }}
                             >
                                 {renderThinkingProcess(thinkingProcess[index], `msg-${index}`)}
@@ -516,7 +593,7 @@ const ChatPage = () => {
             <div style={{
                 display: 'flex',
                 borderTop: '1px solid #f0f0f0',
-                padding: '16px 24px',
+                padding: '12px 20px',
                 background: 'white'
             }}>
                 <TextArea
@@ -528,10 +605,11 @@ const ChatPage = () => {
                     style={{
                         marginRight: '12px',
                         borderRadius: '18px',
-                        padding: '12px 18px',
+                        padding: '10px 16px',
                         resize: 'none',
                         boxShadow: '0 2px 6px rgba(0, 0, 0, 0.05)',
-                        border: '1px solid #e0e5eb'
+                        border: '1px solid #e0e5eb',
+                        fontSize: '14px'
                     }}
                     disabled={loading}
                 />

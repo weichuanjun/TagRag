@@ -1,18 +1,25 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Query, Body, UploadFile, File
-from sqlalchemy.orm import Session
-from typing import Dict, List, Any, Optional
 import os
-import shutil
-import tempfile
 import logging
+from typing import List, Dict, Any, Optional
+import tempfile
+import shutil
+from datetime import datetime
+import json
 
-from models import get_db, KnowledgeBase, CodeRepository, CodeFile  # 添加CodeRepository和CodeFile导入
+from fastapi import APIRouter, HTTPException, Depends, Query, Path, UploadFile, File, Body, BackgroundTasks
+from sqlalchemy.orm import Session
+from sqlalchemy import desc, func
+
+from models import get_db, CodeRepository, CodeFile, CodeComponent, ComponentDependency, KnowledgeBase
+from code_analyzer import CodeAnalyzer
 from enhanced_code_analyzer import EnhancedCodeAnalyzer
 from analysis_service import CodeAnalysisService
-from config import get_autogen_config  # 使用现有配置管理
+from vector_store import VectorStore
+
+# 导入向量化函数
+from utils.vectorize_repo import vectorize_repository
 
 router = APIRouter(prefix="/code", tags=["code-analysis"])
-
 logger = logging.getLogger(__name__)
 
 # 模型客户端
@@ -95,6 +102,7 @@ async def create_repository(
     repo_path: str = Body(..., embed=True),
     repo_name: Optional[str] = Body(None, embed=True),
     knowledge_base_id: Optional[int] = Body(None, embed=True),
+    auto_vectorize: bool = Body(True, embed=True),  # 默认自动向量化
     db: Session = Depends(get_db)
 ):
     """创建或更新代码仓库，并在后台分析代码"""
@@ -116,14 +124,76 @@ async def create_repository(
         # 立即开始分析
         repo_id = await analyzer.analyze_repository(repo_path, repo_name, knowledge_base_id)
         
-        return {
-            "status": "success",
-            "repository_id": repo_id,
-            "message": "代码库分析已开始"
-        }
+        # 如果设定了自动向量化，则立即开始向量化
+        if auto_vectorize:
+            # 在后台任务中执行向量化
+            background_tasks.add_task(
+                _vectorize_repository_background, 
+                repo_id=repo_id, 
+                knowledge_base_id=knowledge_base_id,
+                db_session=db
+            )
+            
+            return {
+                "status": "success",
+                "repository_id": repo_id,
+                "message": "代码库分析已完成，向量化正在后台执行"
+            }
+        else:
+            return {
+                "status": "success",
+                "repository_id": repo_id,
+                "message": "代码库分析已完成"
+            }
     except Exception as e:
         logger.error(f"创建代码库时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"分析代码库失败: {str(e)}")
+
+# 后台向量化代码库的辅助函数
+async def _vectorize_repository_background(repo_id: int, knowledge_base_id: Optional[int], db_session: Session):
+    """在后台执行代码库向量化
+    
+    Args:
+        repo_id: 代码库ID
+        knowledge_base_id: 知识库ID
+        db_session: 数据库会话
+    """
+    logger.info(f"开始在后台向量化代码库 ID={repo_id}")
+    
+    try:
+        # 获取代码库信息
+        repo = db_session.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+        if not repo:
+            logger.error(f"后台向量化: 找不到代码库 ID={repo_id}")
+            return
+            
+        # 确定要使用的知识库ID
+        effective_kb_id = knowledge_base_id or repo.knowledge_base_id or repo_id
+        
+        # 执行向量化
+        result = await vectorize_repository(
+            repo_id=repo_id,
+            knowledge_base_id=effective_kb_id,
+            db=db_session
+        )
+        
+        logger.info(f"后台向量化完成: {result.get('message')}")
+        
+        # 更新代码库的向量化状态和知识库关联
+        repo.vectorized = True
+        repo.last_vectorized = datetime.utcnow()
+        
+        # 确保代码库关联了正确的知识库ID
+        if effective_kb_id != repo_id and repo.knowledge_base_id != effective_kb_id:
+            repo.knowledge_base_id = effective_kb_id
+            logger.info(f"更新代码库 {repo_id} 的知识库关联: knowledge_base_id={effective_kb_id}")
+        
+        db_session.commit()
+        
+    except Exception as e:
+        logger.error(f"后台向量化代码库失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 @router.post("/repositories/upload")
 async def upload_repository(
@@ -442,4 +512,139 @@ async def get_file_content(
         }
     except Exception as e:
         logger.error(f"获取文件内容时出错: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"获取文件内容失败: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"获取文件内容失败: {str(e)}")
+
+@router.post("/repositories/{repo_id}/vectorize")
+async def vectorize_repository(
+    repo_id: int,
+    knowledge_base_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """将已分析的代码库存储到向量数据库，用于后续检索"""
+    
+    # 获取代码库信息
+    repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail=f"代码库ID {repo_id} 不存在")
+    
+    try:
+        # 使用的知识库ID：优先使用请求中的，否则使用代码库关联的，再否则使用代码库ID作为知识库ID
+        effective_kb_id = knowledge_base_id or repo.knowledge_base_id or repo_id
+        logger.info(f"向量化代码库 {repo_id} (名称: {repo.name}) 到知识库 {effective_kb_id}")
+        
+        # 检查代码库是否已经向量化
+        if repo.vectorized:
+            logger.info(f"代码库 {repo_id} 已经向量化，将重新处理")
+        
+        # 初始化代码分析器
+        analyzer = EnhancedCodeAnalyzer(db)
+        
+        # 获取要向量化的文档
+        logger.info(f"开始分析代码库 {repo.path}...")
+        result = await analyzer.analyze_and_vectorize_repository(
+            repo_path=repo.path,
+            repo_name=repo.name,
+            knowledge_base_id=effective_kb_id
+        )
+        
+        if result["status"] == "error":
+            raise HTTPException(status_code=500, detail=result["message"])
+            
+        documents = result.get("documents", [])
+        document_count = len(documents)
+        logger.info(f"分析完成，获取到 {document_count} 个代码组件文档")
+        
+        if not documents:
+            return {
+                "status": "warning",
+                "message": "没有找到可向量化的代码组件",
+                "document_count": 0,
+                "repository_id": repo_id
+            }
+            
+        # 初始化向量存储
+        vector_store = VectorStore(knowledge_base_id=effective_kb_id)
+        
+        # 批量添加文档
+        logger.info(f"开始向量化 {document_count} 个代码组件文档...")
+        
+        # 预处理文档以适应VectorStore.add_documents的要求
+        document_batches = []
+        batch_size = 50  # 每批处理的文档数
+        
+        for i in range(0, document_count, batch_size):
+            document_batches.append(documents[i:i+batch_size])
+        
+        # 批量处理文档
+        total_added = 0
+        failed_batches = 0
+        
+        for batch_idx, batch in enumerate(document_batches):
+            batch_num = batch_idx + 1
+            logger.info(f"处理批次 {batch_num}/{len(document_batches)}，包含 {len(batch)} 个文档")
+            
+            try:
+                # 构建文档元数据
+                for doc in batch:
+                    # 确保文档元数据包含知识库ID
+                    if "knowledge_base_id" not in doc.metadata:
+                        doc.metadata["knowledge_base_id"] = effective_kb_id
+                    
+                    # 确保内容类型为代码
+                    doc.metadata["content_type"] = "code"
+                
+                # 添加文档到向量存储
+                add_result = await vector_store.add_documents(
+                    documents=batch,
+                    source_file=f"code_repo_{repo_id}",  # 统一的源文件标记
+                    document_id=repo_id  # 使用仓库ID作为文档ID
+                )
+                
+                if add_result.get("status") == "success":
+                    added_count = add_result.get("count", 0)
+                    total_added += added_count
+                    logger.info(f"批次 {batch_num} 成功添加 {added_count} 个文档")
+                else:
+                    logger.warning(f"批次 {batch_num} 添加异常: {add_result.get('message', '未知错误')}")
+                    failed_batches += 1
+                    
+            except Exception as e:
+                logger.error(f"处理批次 {batch_num} 时出错: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                failed_batches += 1
+        
+        # 更新代码库的向量化状态和知识库关联
+        repo.vectorized = True
+        repo.last_vectorized = datetime.utcnow()
+        
+        # 确保代码库关联了正确的知识库ID
+        if effective_kb_id != repo_id and repo.knowledge_base_id != effective_kb_id:
+            repo.knowledge_base_id = effective_kb_id
+            logger.info(f"更新代码库 {repo_id} 的知识库关联: knowledge_base_id={effective_kb_id}")
+        
+        db.commit()
+        
+        status = "success" if failed_batches == 0 else "partial_success"
+        
+        return {
+            "status": status,
+            "repository_id": repo_id,
+            "knowledge_base_id": effective_kb_id,
+            "message": f"成功向量化 {total_added}/{document_count} 个代码组件",
+            "total_documents": document_count,
+            "processed_documents": total_added,
+            "failed_batches": failed_batches
+        }
+        
+    except Exception as e:
+        logger.error(f"向量化代码库时出错: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        # 如果过程中出错，标记向量化失败
+        if repo:
+            repo.vectorized = False
+            db.commit()
+            
+        raise HTTPException(status_code=500, detail=f"向量化失败: {str(e)}") 

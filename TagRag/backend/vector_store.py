@@ -349,28 +349,39 @@ class VectorStore:
                     
                     logger.info(f"使用标签过滤器: {final_filter}")
                 else:
-                    # 非标签过滤器，直接使用
-                    final_filter = metadata_filter
+                    # 非标签过滤器，转换为ChromaDB支持的格式
+                    # ChromaDB要求使用$eq等操作符
+                    if metadata_filter:
+                        conditions = []
+                        for key, value in metadata_filter.items():
+                            conditions.append({key: {"$eq": value}})
+                        
+                        if len(conditions) > 1:
+                            final_filter = {"$and": conditions}
+                        else:
+                            final_filter = conditions[0]
+                    else:
+                        final_filter = metadata_filter
                     logger.info(f"使用非标签过滤器: {final_filter}")
             
             # 如果设置了知识库ID，确保在过滤条件中
             if self.knowledge_base_id is not None:
-                kb_filter = {"knowledge_base_id": self.knowledge_base_id}
+                kb_condition = {"knowledge_base_id": {"$eq": self.knowledge_base_id}}
                 
                 if final_filter:
-                    # 结合标签条件和知识库条件
-                    # 简单版本：将标签条件视为一个整体，与知识库条件做AND
-                    if "$or" in final_filter:
-                        # 复杂情况：使用$and组合$or和kb_filter
-                        combined_filter = {"$and": [{"$or": final_filter["$or"]}, kb_filter]}
+                    # 合并过滤条件
+                    if "$and" in final_filter:
+                        # 如果已经是$and条件，添加到条件列表中
+                        final_filter["$and"].append(kb_condition)
+                    elif "$or" in final_filter:
+                        # 如果是$or条件，使用$and包装$or和kb_condition
+                        final_filter = {"$and": [final_filter, kb_condition]}
                     else:
-                        # 简单情况：直接合并两个字典
-                        combined_filter = final_filter.copy()
-                        combined_filter.update(kb_filter)
-                    
-                    final_filter = combined_filter
+                        # 如果是单个条件，创建$and数组
+                        final_filter = {"$and": [final_filter, kb_condition]}
                 else:
-                    final_filter = kb_filter
+                    # 只有知识库条件
+                    final_filter = kb_condition
                 
                 logger.info(f"添加知识库过滤条件后的最终过滤器: {final_filter}")
             

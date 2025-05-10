@@ -34,8 +34,53 @@ const TagManagementPage = () => {
     const [selectedDocChunks, setSelectedDocChunks] = useState([]);
     const [chunksLoading, setChunksLoading] = useState(false);
 
+    // 获取标签关联的文档列表 - 移到了fetchTags前面
+    const fetchTagDocuments = useCallback(async (tagId) => {
+        if (!tagId) return;
+
+        setLoadingDocuments(prev => ({ ...prev, [tagId]: true }));
+        try {
+            const response = await axios.get(`/tags/${tagId}/documents`);
+            // 修正这里的数据获取方式，API直接返回文档数组
+            const documents = Array.isArray(response.data) ? response.data : [];
+
+            setTagDocumentsMap(prev => ({
+                ...prev,
+                [tagId]: documents
+            }));
+
+            // 文档信息更新后，重新检查标签是否可删除
+            checkTagDeletable(tagId);
+        } catch (error) {
+            console.error(`获取标签 ${tagId} 的关联文档失败:`, error);
+            message.error('获取标签关联文档失败');
+        } finally {
+            setLoadingDocuments(prev => ({ ...prev, [tagId]: false }));
+        }
+    }, []);
+
+    // 检查标签是否可以安全删除并缓存结果
+    const checkTagDeletable = useCallback(async (tagId) => {
+        try {
+            const response = await axios.get(`/tags/${tagId}/can-delete`);
+            setTagDeleteStatus(prev => ({
+                ...prev,
+                [tagId]: response.data.can_delete
+            }));
+
+            return response.data.can_delete;
+        } catch (error) {
+            console.error(`检查标签 ${tagId} 是否可安全删除时出错:`, error);
+            setTagDeleteStatus(prev => ({
+                ...prev,
+                [tagId]: false
+            }));
+            return false;
+        }
+    }, []);
+
     // 获取可安全删除的标签数量
-    const fetchDeletableTagsCount = async () => {
+    const fetchDeletableTagsCount = useCallback(async () => {
         try {
             const response = await axios.get('/tags/deletable');
             setDeletableTagsCount(response.data.count || 0);
@@ -44,6 +89,59 @@ const TagManagementPage = () => {
             console.error('获取可删除标签数量失败:', error);
             return 0;
         }
+    }, []);
+
+    // 获取标签列表
+    const fetchTags = useCallback(async () => {
+        setLoading(true);
+        try {
+            // 构建请求URL，如果选择了知识库则添加过滤参数
+            let url = '/tags';
+            if (selectedKB) {
+                url += `?knowledge_base_id=${selectedKB}`;
+            }
+            const response = await axios.get(url);
+            const tagList = response.data.tags || [];
+
+            setTags(tagList);
+            setParentTags(tagList.filter(tag => !tag.parent_id));
+
+            // 清空之前的文档映射
+            setTagDocumentsMap({});
+
+            // 获取每个标签关联的文档
+            tagList.forEach(tag => {
+                fetchTagDocuments(tag.id);
+            });
+
+            // 重置标签删除状态
+            const newDeleteStatus = {};
+            // 为每个标签初始化可删除状态为未知（null）
+            tagList.forEach(tag => {
+                newDeleteStatus[tag.id] = null;
+            });
+            setTagDeleteStatus(newDeleteStatus);
+
+            // 只对所有标签进行一次批量检查
+            const tagsToCheck = tagList.slice(0, 5); // 限制只检查前5个标签，避免大量请求
+            tagsToCheck.forEach(tag => {
+                checkTagDeletable(tag.id);
+            });
+
+            // 获取可删除标签的数量 - 只调用一次
+            fetchDeletableTagsCount();
+        } catch (error) {
+            console.error('获取标签列表失败:', error);
+            message.error('获取标签列表失败');
+        } finally {
+            setLoading(false);
+        }
+    }, [selectedKB, fetchTagDocuments, fetchDeletableTagsCount, checkTagDeletable]);
+
+    // 判断标签是否可以安全删除（从缓存状态获取）
+    const canSafelyDeleteTag = (tagId) => {
+        // 所有标签都可以删除
+        return true;
     };
 
     // 批量安全删除标签
@@ -71,6 +169,7 @@ const TagManagementPage = () => {
                             {deletableTags.map(tag => (
                                 <Tag key={tag.id} color={tag.color} style={{ margin: '2px' }}>
                                     {tag.name}
+                                    {tag.hierarchy_level === 'root' && <span> (ROOT)</span>}
                                 </Tag>
                             ))}
                         </div>
@@ -86,7 +185,7 @@ const TagManagementPage = () => {
                         let successCount = 0;
                         for (const tag of deletableTags) {
                             try {
-                                await axios.delete(`/tags/${tag.id}`);
+                                await axios.delete(`/tags/${tag.id}?force=true`);
                                 successCount++;
                             } catch (err) {
                                 console.error(`删除标签 ${tag.id} (${tag.name}) 失败:`, err);
@@ -124,91 +223,25 @@ const TagManagementPage = () => {
         }
     };
 
-    // 获取标签列表
-    const fetchTags = async () => {
-        setLoading(true);
-        try {
-            // 构建请求URL，如果选择了知识库则添加过滤参数
-            let url = '/tags';
-            if (selectedKB) {
-                url += `?knowledge_base_id=${selectedKB}`;
-            }
-            const response = await axios.get(url);
-            const tagList = response.data.tags || [];
-
-            setTags(tagList);
-            setParentTags(tagList.filter(tag => !tag.parent_id));
-
-            // 清空之前的文档映射
-            setTagDocumentsMap({});
-
-            // 获取每个标签关联的文档
-            tagList.forEach(tag => {
-                fetchTagDocuments(tag.id);
-            });
-
-            // 重置标签删除状态
-            const newDeleteStatus = {};
-            // 为每个标签初始化可删除状态为未知（null）
-            tagList.forEach(tag => {
-                newDeleteStatus[tag.id] = null;
-            });
-            setTagDeleteStatus(newDeleteStatus);
-
-            // 检查每个标签是否可以删除
-            tagList.forEach(tag => {
-                checkTagDeletable(tag.id);
-            });
-
-            // 获取可删除标签的数量
-            fetchDeletableTagsCount();
-        } catch (error) {
-            console.error('获取标签列表失败:', error);
-            message.error('获取标签列表失败');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // 检查标签是否可以安全删除并缓存结果
-    const checkTagDeletable = async (tagId) => {
-        try {
-            const response = await axios.get(`/tags/${tagId}/can-delete`);
-            setTagDeleteStatus(prev => ({
-                ...prev,
-                [tagId]: response.data.can_delete
-            }));
-
-            // 更新可删除标签数量
-            setTimeout(fetchDeletableTagsCount, 100);
-
-            return response.data.can_delete;
-        } catch (error) {
-            console.error(`检查标签 ${tagId} 是否可安全删除时出错:`, error);
-            setTagDeleteStatus(prev => ({
-                ...prev,
-                [tagId]: false
-            }));
-            return false;
-        }
-    };
-
-    // 判断标签是否可以安全删除（从缓存状态获取）
-    const canSafelyDeleteTag = (tagId) => {
-        // 所有标签都可以删除
-        return true;
-    };
-
     // 组件加载时获取标签列表和知识库列表
     useEffect(() => {
         fetchKnowledgeBases();
         fetchTags();
-    }, []);
+
+        // 定时获取可删除标签数量，每30秒更新一次
+        const deletableTagsTimer = setInterval(() => {
+            fetchDeletableTagsCount();
+        }, 30000); // 30秒
+
+        return () => {
+            clearInterval(deletableTagsTimer);
+        };
+    }, [fetchTags, fetchDeletableTagsCount]);
 
     // 当选择的知识库变化时，重新获取标签
     useEffect(() => {
         fetchTags();
-    }, [selectedKB]);
+    }, [fetchTags]);
 
     // 打开添加标签模态框
     const showAddModal = () => {
@@ -327,31 +360,6 @@ const TagManagementPage = () => {
         } catch (error) {
             console.error('删除标签失败:', error);
             message.error('删除标签失败: ' + (error.response?.data?.detail || error.message));
-        }
-    };
-
-    // 获取标签关联的文档列表
-    const fetchTagDocuments = async (tagId) => {
-        if (!tagId) return;
-
-        setLoadingDocuments(prev => ({ ...prev, [tagId]: true }));
-        try {
-            const response = await axios.get(`/tags/${tagId}/documents`);
-            // 修正这里的数据获取方式，API直接返回文档数组
-            const documents = Array.isArray(response.data) ? response.data : [];
-
-            setTagDocumentsMap(prev => ({
-                ...prev,
-                [tagId]: documents
-            }));
-
-            // 文档信息更新后，重新检查标签是否可删除
-            checkTagDeletable(tagId);
-        } catch (error) {
-            console.error(`获取标签 ${tagId} 的关联文档失败:`, error);
-            message.error('获取标签关联文档失败');
-        } finally {
-            setLoadingDocuments(prev => ({ ...prev, [tagId]: false }));
         }
     };
 

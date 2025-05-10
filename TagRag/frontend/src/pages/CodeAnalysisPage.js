@@ -5,10 +5,8 @@ import {
     List, Statistic
 } from 'antd';
 import {
-    SearchOutlined, CodeOutlined, BranchesOutlined,
-    RocketOutlined, FileOutlined, RobotOutlined, FolderOutlined,
-    ArrowRightOutlined, UploadOutlined, LoadingOutlined, DatabaseOutlined,
-    StarOutlined, InfoCircleTwoTone
+    SearchOutlined, SendOutlined, SplitCellsOutlined, FolderOutlined, FileOutlined, StarOutlined, RobotOutlined, SyncOutlined, LoadingOutlined, FileSearchOutlined, DatabaseOutlined,
+    CodeOutlined, BranchesOutlined, RocketOutlined, ArrowRightOutlined, UploadOutlined, InfoCircleTwoTone, PlusOutlined
 } from '@ant-design/icons';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -1091,6 +1089,32 @@ const CodeAnalysisPage = () => {
         );
     });
 
+    // 向量化代码库
+    const vectorizeRepo = async () => {
+        if (!currentRepo) {
+            message.error('请先选择一个代码库');
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const response = await axios.post(`/code/repositories/${currentRepo.id}/vectorize`, {
+                knowledge_base_id: selectedKnowledgeBase
+            });
+
+            if (response.data.status === 'success' || response.data.status === 'partial_success') {
+                message.success(`代码库向量化成功，已处理 ${response.data.processed_documents} 个组件`);
+            } else {
+                message.warning(response.data.message || '向量化操作未完全成功');
+            }
+        } catch (error) {
+            console.error('向量化代码库失败:', error);
+            message.error(`向量化失败: ${error.response?.data?.detail || error.message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const repoSelector = (
         <Space style={{ marginBottom: 16 }}>
             <span style={{ fontWeight: 'bold' }}>知识库:</span>
@@ -1130,6 +1154,15 @@ const CodeAnalysisPage = () => {
                 onClick={() => setUploadModalVisible(true)}
             >
                 添加代码库
+            </Button>
+
+            <Button
+                type="primary"
+                icon={<DatabaseOutlined />}
+                onClick={vectorizeRepo}
+                disabled={!currentRepo}
+            >
+                向量化代码库
             </Button>
         </Space>
     );
