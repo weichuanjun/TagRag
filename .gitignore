@@ -83,4 +83,5 @@ TagRag/backend/data
 output_txts
 citation-example
 TagRag/backend/tagrag-env
-TagRag/data
+TagRag/data/vector_db/
+TagRag/backend/data/vector_db/
