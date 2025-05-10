@@ -79,6 +79,7 @@ chroma/
 .DS_Store
 Thumbs.db 
 
+TagRag/backend/data
 output_txts
 citation-example
-rag-agent/data
+TagRag/backend/tagrag-env
