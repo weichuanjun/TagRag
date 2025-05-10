@@ -1,1 +1,0 @@
-import sqlite3; conn = sqlite3.connect("data/db/code_analysis.db"); conn.execute("ALTER TABLE tags ADD COLUMN hierarchy_level VARCHAR DEFAULT \"leaf\""); conn.execute("ALTER TABLE tags ADD COLUMN is_system BOOLEAN DEFAULT 0"); conn.commit(); print("数据库迁移完成")
