@@ -3,6 +3,7 @@ import { Card, Select, Button, Spin, Space, Tooltip, Input, Tag, Empty, Switch, 
 import { SearchOutlined, ExpandOutlined, CompressOutlined, InfoCircleOutlined, TagsOutlined, FileTextOutlined, ForceOutlined, ZoomInOutlined, ZoomOutOutlined, ReloadOutlined } from '@ant-design/icons';
 import ForceGraph2D from 'react-force-graph-2d';
 import axios from 'axios';
+import * as d3 from 'd3';
 
 const { Option } = Select;
 const { Title, Paragraph, Text } = Typography;
@@ -22,8 +23,9 @@ const GraphVisualizerPage = () => {
     const [contentDrawerVisible, setContentDrawerVisible] = useState(false);
     const [contentText, setContentText] = useState('');
     const [showLabels, setShowLabels] = useState(true); // 是否显示标签文字
-    const [linkDistance, setLinkDistance] = useState(120); // 连接线距离
-    const [chargeStrength, setChargeStrength] = useState(-80); // 节点排斥力
+    const [linkDistance, setLinkDistance] = useState(150); // 增加父子节点间的距离
+    const [chargeStrength, setChargeStrength] = useState(-350); // 大幅增强节点间排斥力使独立群组更紧凑
+    const [viewMode, setViewMode] = useState('tag_hierarchy'); // 新增视图模式: tag_hierarchy 或 document_tags
     const graphRef = useRef();
 
     // 获取知识库列表
@@ -37,7 +39,7 @@ const GraphVisualizerPage = () => {
             fetchGraphData(selectedKnowledgeBase);
             fetchTagTypes(selectedKnowledgeBase);
         }
-    }, [selectedKnowledgeBase]);
+    }, [selectedKnowledgeBase, viewMode]);
 
     // 标签类型筛选或只显示标签模式变更时重新加载图数据
     useEffect(() => {
@@ -81,10 +83,17 @@ const GraphVisualizerPage = () => {
                 params.tag_types = selectedTagTypes.join(',');
             }
 
-            // 选择合适的API端点
-            const endpoint = onlyShowTags
-                ? `/graph/tag-data/${knowledgeBaseId}`
-                : `/graph/data/${knowledgeBaseId}`;
+            // 根据视图模式选择合适的API端点
+            let endpoint;
+            if (viewMode === 'tag_hierarchy') {
+                // 标签层级关系视图
+                endpoint = `/graph/tag-relations/${knowledgeBaseId}`;
+            } else {
+                // 原有的文档-标签关系视图
+                endpoint = onlyShowTags
+                    ? `/graph/tag-data/${knowledgeBaseId}`
+                    : `/graph/data/${knowledgeBaseId}`;
+            }
 
             const response = await axios.get(endpoint, { params });
             setGraphData(response.data);
@@ -131,17 +140,24 @@ const GraphVisualizerPage = () => {
     const handleNodeClick = (node) => {
         setSelectedEntity(node);
 
-        // 如果有相关内容，可以显示在抽屉中
+        // 确保有相关内容时显示抽屉
         if (node.related_content) {
             setContentText(node.related_content);
             setContentDrawerVisible(true);
+        } else if (node.description) {
+            // 如果没有related_content但有description，也显示在抽屉中
+            setContentText(node.description);
+            setContentDrawerVisible(true);
         }
 
-        // 可选：高亮显示相关连接并居中显示
+        // 高亮显示相关连接并居中显示
         if (graphRef.current) {
-            graphRef.current.centerAt(node.x, node.y, 1000);
-            graphRef.current.zoom(2, 1000);
+            graphRef.current.centerAt(node.x, node.y, 800);
+            graphRef.current.zoom(1.8, 800); // 增加缩放比例以便查看详情
         }
+
+        // 添加日志以便调试
+        console.log("点击节点:", node);
     };
 
     const toggleFullscreen = () => {
@@ -172,9 +188,9 @@ const GraphVisualizerPage = () => {
         const avgX = sumX / tagNodes.length;
         const avgY = sumY / tagNodes.length;
 
-        // 居中并稍微缩小视图
-        graphRef.current.centerAt(avgX, avgY, 1000);
-        graphRef.current.zoom(1.5, 1000);
+        // 居中并以适当比例显示
+        graphRef.current.centerAt(avgX, avgY, 800);
+        graphRef.current.zoom(1.2, 800);
     };
 
     // 重新布局图表
@@ -184,26 +200,61 @@ const GraphVisualizerPage = () => {
         // 设置强制模拟参数
         if (graphRef.current.d3Force) {
             // 设置节点之间的距离
-            graphRef.current.d3Force('link').distance(linkDistance);
+            graphRef.current.d3Force('link').distance(link => {
+                // 父子关系的链接距离保持较大
+                if (link.type === 'PARENT_OF') {
+                    return linkDistance;
+                }
+                // 其他类型的链接距离较小，促进聚集
+                return linkDistance * 0.6;
+            });
 
             // 设置节点间的排斥力
             graphRef.current.d3Force('charge').strength(chargeStrength);
 
+            // 添加聚类力 - 使相同类型的节点靠近
+            graphRef.current.d3Force('collide', d3.forceCollide()
+                .radius(10) // 碰撞半径
+                .strength(0.8) // 碰撞强度
+            );
+
+            // 添加X、Y向心力，使整个图表向中心聚集
+            graphRef.current.d3Force('x', d3.forceX().strength(0.05));
+            graphRef.current.d3Force('y', d3.forceY().strength(0.05));
+
             // 重启模拟
             graphRef.current.d3ReheatSimulation();
+
+            // 打印当前力学参数
+            console.log("力学参数:", {
+                linkDistance,
+                chargeStrength,
+                forceCollide: 0.8,
+                forceX: 0.05,
+                forceY: 0.05
+            });
         }
 
         // 稍后居中到标签节点
         setTimeout(() => {
             centerOnTags();
-        }, 500);
+        }, 800);
     };
 
     // 获取节点样式
     const getNodeCanvasObject = (node, ctx, globalScale) => {
         const label = node.label || '';
-        const fontSize = Math.max(8, node.size ? node.size / 5 : 8); // 更小的字体
-        const nodeR = node.size || 5;
+        const fontSize = Math.max(6, node.size ? node.size / 6 : 6); // 减小字体大小
+
+        // 根据层级简化节点大小
+        let nodeR;
+        if (node.hierarchy_level === 'root') {
+            nodeR = 8; // 根节点稍大
+        } else if (node.hierarchy_level === 'branch') {
+            nodeR = 6; // 分支节点中等
+        } else {
+            nodeR = 4; // 叶节点最小
+        }
 
         // 绘制不同形状的节点
         ctx.beginPath();
@@ -218,25 +269,19 @@ const GraphVisualizerPage = () => {
             ctx.lineWidth = 1;
         }
 
-        // 根据节点形状绘制不同样式
-        switch (node.shape) {
-            case 'triangle':
-                drawTriangle(ctx, node.x, node.y, nodeR);
-                break;
-            case 'square':
-                drawSquare(ctx, node.x, node.y, nodeR);
-                break;
-            case 'diamond':
-                drawDiamond(ctx, node.x, node.y, nodeR);
-                break;
-            case 'star':
-                drawStar(ctx, node.x, node.y, nodeR);
-                break;
-            case 'document':
-                drawDocument(ctx, node.x, node.y, nodeR);
-                break;
-            default:
-                ctx.arc(node.x, node.y, nodeR, 0, 2 * Math.PI);
+        // 简化形状：只用三种形状区分层级
+        if (node.hierarchy_level === 'root') {
+            // 根节点使用方形
+            drawSquare(ctx, node.x, node.y, nodeR);
+        } else if (node.hierarchy_level === 'branch') {
+            // 分支节点使用三角形
+            drawTriangle(ctx, node.x, node.y, nodeR);
+        } else if (node.type === 'CONTENT') {
+            // 内容节点使用文档形状
+            drawDocument(ctx, node.x, node.y, nodeR);
+        } else {
+            // 叶节点和其他节点使用圆形
+            ctx.arc(node.x, node.y, nodeR, 0, 2 * Math.PI);
         }
 
         ctx.fill();
@@ -283,34 +328,6 @@ const GraphVisualizerPage = () => {
     // 辅助函数：绘制方形
     const drawSquare = (ctx, x, y, r) => {
         ctx.rect(x - r, y - r, r * 2, r * 2);
-    };
-
-    // 辅助函数：绘制菱形
-    const drawDiamond = (ctx, x, y, r) => {
-        ctx.moveTo(x, y - r);
-        ctx.lineTo(x + r, y);
-        ctx.lineTo(x, y + r);
-        ctx.lineTo(x - r, y);
-        ctx.closePath();
-    };
-
-    // 辅助函数：绘制星形
-    const drawStar = (ctx, x, y, r) => {
-        const spikes = 5;
-        const outerRadius = r;
-        const innerRadius = r * 0.4;
-
-        let rot = Math.PI / 2 * 3;
-        let step = Math.PI / spikes;
-
-        ctx.moveTo(x, y - outerRadius);
-        for (let i = 0; i < spikes; i++) {
-            ctx.lineTo(x + Math.cos(rot) * outerRadius, y + Math.sin(rot) * outerRadius);
-            rot += step;
-            ctx.lineTo(x + Math.cos(rot) * innerRadius, y + Math.sin(rot) * innerRadius);
-            rot += step;
-        }
-        ctx.closePath();
     };
 
     // 辅助函数：绘制文档形状
@@ -373,6 +390,16 @@ const GraphVisualizerPage = () => {
                             ))}
                         </Select>
 
+                        <Radio.Group
+                            value={viewMode}
+                            onChange={(e) => setViewMode(e.target.value)}
+                            optionType="button"
+                            buttonStyle="solid"
+                        >
+                            <Radio.Button value="tag_hierarchy">标签层级关系</Radio.Button>
+                            <Radio.Button value="document_tags">文档标签关系</Radio.Button>
+                        </Radio.Group>
+
                         <Input
                             placeholder="搜索实体..."
                             value={searchTerm}
@@ -389,15 +416,17 @@ const GraphVisualizerPage = () => {
                             }
                         />
 
-                        <Tooltip title="仅显示标签节点">
-                            <Switch
-                                checkedChildren="仅标签"
-                                unCheckedChildren="全部"
-                                checked={onlyShowTags}
-                                onChange={setOnlyShowTags}
-                                style={{ marginRight: 8 }}
-                            />
-                        </Tooltip>
+                        {viewMode === 'document_tags' && (
+                            <Tooltip title="仅显示标签节点">
+                                <Switch
+                                    checkedChildren="仅标签"
+                                    unCheckedChildren="全部"
+                                    checked={onlyShowTags}
+                                    onChange={setOnlyShowTags}
+                                    style={{ marginRight: 8 }}
+                                />
+                            </Tooltip>
+                        )}
 
                         <Tooltip title="标签类型筛选">
                             <Select
@@ -443,14 +472,16 @@ const GraphVisualizerPage = () => {
                             </Tooltip>
                         </Space>
 
-                        <Tooltip title="图中节点表示文档标签和内容，连线表示它们之间的关系">
+                        <Tooltip title={viewMode === 'tag_hierarchy' ?
+                            "图中节点表示标签层级结构和关系" :
+                            "图中节点表示文档标签和内容，连线表示它们之间的关系"}>
                             <InfoCircleOutlined style={{ color: '#1890ff' }} />
                         </Tooltip>
                     </Space>
                 </div>
 
                 <div style={{
-                    height: fullscreen ? 'calc(100vh - 180px)' : '70vh',
+                    height: fullscreen ? 'calc(100vh - 180px)' : '55vh', // 图表高度从70vh减小到55vh
                     position: 'relative',
                     border: '1px solid #f0f0f0',
                     borderRadius: '4px',
@@ -466,15 +497,41 @@ const GraphVisualizerPage = () => {
                             graphData={graphData}
                             nodeLabel={node => `${node.label}: ${node.description || ''}`}
                             linkLabel={link => link.type || '关联'}
-                            linkWidth={link => link.width || (selectedEntity && (link.source.id === selectedEntity.id || link.target.id === selectedEntity.id) ? 3 : 1)}
-                            linkColor={link => link.color || (selectedEntity && (link.source.id === selectedEntity.id || link.target.id === selectedEntity.id) ? '#ff6600' : '#999')}
+                            linkWidth={link => {
+                                // 增强父子链接的显示
+                                if (link.type === 'PARENT_OF') {
+                                    return link.width || 1.5;
+                                }
+                                return link.width || 0.8;
+                            }}
+                            linkColor={link => {
+                                if (selectedEntity && (link.source.id === selectedEntity.id || link.target.id === selectedEntity.id)) {
+                                    return '#ff6600'; // 高亮选中节点的连接
+                                }
+                                return link.color || '#999';
+                            }}
                             onNodeClick={handleNodeClick}
                             cooldownTicks={100}
                             nodeCanvasObject={getNodeCanvasObject}
-                            linkLineDash={link => link.dashed ? [5, 3] : undefined}
-                            linkDirectionalArrowLength={link => link.arrow ? 6 : 0}
-                            d3Force="charge"
-                            d3ForceChargeStrength={chargeStrength}
+                            linkLineDash={link => link.dashed ? [4, 2] : undefined}
+                            linkDirectionalArrowLength={link => link.type === 'PARENT_OF' ? 5 : (link.arrow ? 4 : 0)}
+                            linkDirectionalArrowRelPos={0.9}
+                            linkCurvature={link => link.type === 'PARENT_OF' ? 0 : 0.2} // 父子链接为直线
+                            d3Force={(name, force) => {
+                                // 添加自定义力
+                                if (name === 'charge') {
+                                    // 强化排斥力
+                                    force.strength(chargeStrength).distanceMax(300);
+                                }
+                            }}
+                            linkStrength={link => {
+                                // 父子关系的链接强度较低，允许更多的弹性
+                                if (link.type === 'PARENT_OF') {
+                                    return 0.3;
+                                }
+                                // 其他类型的链接强度较高，确保紧密连接
+                                return link.value || 0.9;
+                            }}
                             d3ForceDistance={linkDistance}
                             warmupTicks={100}
                             onEngineStop={() => {
@@ -487,15 +544,15 @@ const GraphVisualizerPage = () => {
                     )}
                 </div>
 
-                <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between' }}>
                     {/* 图表参数调整 */}
                     <div style={{ width: '100%', maxWidth: '600px' }}>
                         <Space direction="vertical" size="small" style={{ width: '100%' }}>
                             <div>
                                 <Text>节点间距调整:</Text>
                                 <Slider
-                                    min={50}
-                                    max={300}
+                                    min={30} // 最小值从50减小到30
+                                    max={200} // 最大值从300减小到200
                                     value={linkDistance}
                                     onChange={(value) => setLinkDistance(value)}
                                     onAfterChange={resetLayout}
@@ -516,36 +573,30 @@ const GraphVisualizerPage = () => {
                         </Space>
                     </div>
 
-                    {/* 选中节点信息 */}
+                    {/* 选中节点信息 - 简化显示 */}
                     {selectedEntity && (
-                        <div style={{ padding: 16, background: '#f9f9f9', borderRadius: 4, minWidth: '400px' }}>
+                        <div style={{ padding: 12, background: '#f9f9f9', borderRadius: 4, maxWidth: '400px', minWidth: '300px' }}>
                             <Space align="start">
-                                <Title level={4}>{selectedEntity.label}</Title>
+                                <Title level={5}>{selectedEntity.label}</Title> {/* 从level 4改为level 5，减小标题大小 */}
                                 {selectedEntity.tag_type && (
                                     <Tag color={selectedEntity.color}>{selectedEntity.tag_type}</Tag>
                                 )}
                             </Space>
 
-                            <Paragraph>{selectedEntity.description}</Paragraph>
+                            <Paragraph ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}>{selectedEntity.description}</Paragraph> {/* 添加ellipsis让描述可折叠 */}
 
                             {selectedEntity.related_content && (
                                 <Button
                                     type="primary"
+                                    size="small" // 减小按钮大小
                                     icon={<FileTextOutlined />}
                                     onClick={() => {
                                         setContentText(selectedEntity.related_content);
                                         setContentDrawerVisible(true);
                                     }}
                                 >
-                                    查看相关内容
+                                    查看文档
                                 </Button>
-                            )}
-
-                            {selectedEntity.type === "TAG" && (
-                                <div style={{ marginTop: 8 }}>
-                                    <Text strong>重要性: </Text>
-                                    <Text>{(selectedEntity.importance * 100).toFixed(0)}%</Text>
-                                </div>
                             )}
                         </div>
                     )}
@@ -553,15 +604,27 @@ const GraphVisualizerPage = () => {
             </Card>
 
             <Drawer
-                title="原始内容"
+                title={selectedEntity ? `${selectedEntity.label}的详细信息` : "详细信息"}
                 placement="right"
                 onClose={() => setContentDrawerVisible(false)}
                 open={contentDrawerVisible}
                 width={500}
             >
                 <div style={{ whiteSpace: 'pre-wrap' }}>
-                    {contentText}
+                    {contentText || "没有可显示的内容"}
                 </div>
+
+                {selectedEntity && selectedEntity.type === 'TAG' && (
+                    <div style={{ marginTop: 16 }}>
+                        <Button type="primary" onClick={() => {
+                            // 这里可以添加查询标签相关文档的API调用
+                            console.log("查询相关文档:", selectedEntity.id);
+                            // 示例：fetchTagDocuments(selectedEntity.id);
+                        }}>
+                            查看相关文档
+                        </Button>
+                    </div>
+                )}
             </Drawer>
         </div>
     );

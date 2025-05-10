@@ -14,6 +14,7 @@ import {
     ApartmentOutlined,
     SettingOutlined,
     ExperimentOutlined
+    // FileTextOutlined // 移除图标
 } from '@ant-design/icons';
 import axios from 'axios'; // 导入axios
 
@@ -25,6 +26,7 @@ import KnowledgeBasePage from './pages/KnowledgeBasePage';  // 新增知识库�
 import AgentPromptPage from './pages/AgentPromptPage';  // 新增Agent提示词管理页面
 import GraphVisualizerPage from './pages/GraphVisualizerPage';  // 新增图可视化页面
 import TagManagementPage from './pages/TagManagementPage';  // 新增标签管理页面
+// import ManageDocuments from './pages/ManageDocuments'; // 移除导入
 
 // 配置 Axios baseURL
 // 使用REACT_APP_API_BASE_URL环境变量，如果未设置，则默认为 docker-compose 中的后端服务地址
@@ -65,6 +67,10 @@ function App() {
                     <Menu.Item key="7" icon={<TagsOutlined />}>
                         <Link to="/tags">标签管理</Link>
                     </Menu.Item>
+                    {/* Remove menu item for document management */}
+                    {/* <Menu.Item key="8" icon={<FileTextOutlined />}>
+                        <Link to="/documents">文档管理</Link>
+                    </Menu.Item> */}
                 </Menu>
             </Sider>
             <Layout className="site-layout">
@@ -79,6 +85,8 @@ function App() {
                             <Route path="/agent-prompt" element={<AgentPromptPage />} />
                             <Route path="/graph-view" element={<GraphVisualizerPage />} />
                             <Route path="/tags" element={<TagManagementPage />} />
+                            {/* Remove route for document management */}
+                            {/* <Route path="/documents" element={<ManageDocuments />} /> */}
                             <Route path="/" element={<Navigate to="/chat" replace />} />
                         </Routes>
                     </div>
