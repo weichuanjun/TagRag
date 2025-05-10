@@ -1,6 +1,6 @@
 import React from 'react';
 import { Routes, Route, Link, Navigate } from 'react-router-dom';
-import { Layout, Menu, ConfigProvider, theme } from 'antd';
+import { Layout, Menu, ConfigProvider, theme, Typography } from 'antd';
 import {
     MessageOutlined,
     CodeOutlined,
@@ -35,7 +35,8 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:800
 axios.defaults.baseURL = API_BASE_URL;
 console.log(`API Base URL set to: ${API_BASE_URL}`); // 用于调试
 
-const { Header, Content, Footer, Sider } = Layout;
+const { Content, Footer, Sider } = Layout;
+const { Title } = Typography;
 
 function App() {
     return (
@@ -44,7 +45,22 @@ function App() {
                 breakpoint="lg"
                 collapsedWidth="0"
             >
-                <div className="logo" style={{ height: '32px', margin: '16px', background: 'rgba(255, 255, 255, 0.2)' }} />
+                <div style={{
+                    padding: '16px 24px',
+                    textAlign: 'center'
+                }}>
+                    <Title
+                        level={4}
+                        style={{
+                            margin: 0,
+                            color: 'white',
+                            fontWeight: 'bold',
+                            fontFamily: 'Helvetica, Arial, sans-serif'
+                        }}
+                    >
+                        TagRAG
+                    </Title>
+                </div>
                 <Menu theme="dark" defaultSelectedKeys={['1']} mode="inline">
                     <Menu.Item key="1" icon={<MessageOutlined />}>
                         <Link to="/chat">智能问答</Link>
@@ -59,10 +75,10 @@ function App() {
                         <Link to="/knowledge-bases">知识库管理</Link>
                     </Menu.Item>
                     <Menu.Item key="5" icon={<RobotOutlined />}>
-                        <Link to="/agent-prompt">Agent提示词管理</Link>
+                        <Link to="/agent-prompt">Agent提示词</Link>
                     </Menu.Item>
                     <Menu.Item key="6" icon={<ShareAltOutlined />}>
-                        <Link to="/graph-view">知识图谱可视化</Link>
+                        <Link to="/graph-view">知识图谱</Link>
                     </Menu.Item>
                     <Menu.Item key="7" icon={<TagsOutlined />}>
                         <Link to="/tags">标签管理</Link>
@@ -74,7 +90,6 @@ function App() {
                 </Menu>
             </Sider>
             <Layout className="site-layout">
-                <Header className="site-layout-background" style={{ padding: 0, background: '#fff' }} />
                 <Content style={{ margin: '0 16px' }}>
                     <div className="site-layout-background" style={{ padding: 24, minHeight: 360 }}>
                         <Routes>
@@ -91,7 +106,7 @@ function App() {
                         </Routes>
                     </div>
                 </Content>
-                <Footer style={{ textAlign: 'center' }}>RAG Agent ©2025 WEICHUANJUN</Footer>
+                <Footer style={{ textAlign: 'center' }}>TagRAG ©2025 WEICHUANJUN</Footer>
             </Layout>
         </Layout>
     );
