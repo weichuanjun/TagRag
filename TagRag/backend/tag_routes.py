@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 import json
 import logging
 import re
+from sqlalchemy import text
 
 from models import get_db, Tag, Document, DocumentChunk, document_tags, document_chunk_tags, KnowledgeBase, TagDependency
 from config import get_autogen_config
@@ -842,20 +843,32 @@ async def update_tag(
 
 @router.get("/tags/{tag_id}/documents")
 async def get_tag_documents(
-    tag_id: int,
+    tag_id: str,
     db: Session = Depends(get_db)
 ):
     """获取标签关联的所有文档"""
     try:
+        # 处理tag_id格式，如果是形如"tag_123"的格式，提取数字部分
+        if isinstance(tag_id, str) and tag_id.startswith("tag_"):
+            try:
+                numeric_id = int(tag_id.split("_")[1])
+            except (IndexError, ValueError):
+                raise HTTPException(status_code=422, detail=f"无效的标签ID格式: {tag_id}")
+        else:
+            try:
+                numeric_id = int(tag_id)
+            except ValueError:
+                raise HTTPException(status_code=422, detail=f"无效的标签ID格式: {tag_id}")
+                
         # 查找标签
-        tag = db.query(Tag).filter(Tag.id == tag_id).first()
+        tag = db.query(Tag).filter(Tag.id == numeric_id).first()
         if not tag:
-            raise HTTPException(status_code=404, detail=f"标签ID {tag_id} 不存在")
+            raise HTTPException(status_code=404, detail=f"标签ID {numeric_id} 不存在")
         
         # 获取与该标签关联的所有文档
         documents = db.query(Document)\
             .join(document_tags, Document.id == document_tags.c.document_id)\
-            .filter(document_tags.c.tag_id == tag_id)\
+            .filter(document_tags.c.tag_id == numeric_id)\
             .all()
         
         # 构建响应数据
@@ -880,7 +893,7 @@ async def get_tag_documents(
                 "knowledge_base_name": kb_name
             })
         
-        return {"documents": result_documents}
+        return result_documents
     except HTTPException:
         raise
     except Exception as e:

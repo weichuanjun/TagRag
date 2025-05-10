@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Select, Button, Spin, Space, Tooltip, Input, Tag, Empty, Switch, Divider, Typography, Checkbox, Drawer, Radio, Slider } from 'antd';
-import { SearchOutlined, ExpandOutlined, CompressOutlined, InfoCircleOutlined, TagsOutlined, FileTextOutlined, ForceOutlined, ZoomInOutlined, ZoomOutOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Select, Button, Spin, Space, Tooltip, Input, Tag, Empty, Switch, Divider, Typography, Checkbox, Drawer, Radio, Slider, Table, List, Modal, Row, Col } from 'antd';
+import { SearchOutlined, ExpandOutlined, CompressOutlined, InfoCircleOutlined, TagsOutlined, FileTextOutlined, ForceOutlined, ZoomInOutlined, ZoomOutOutlined, ReloadOutlined, EyeOutlined, SettingOutlined } from '@ant-design/icons';
 import ForceGraph2D from 'react-force-graph-2d';
 import axios from 'axios';
 import * as d3 from 'd3';
@@ -27,6 +27,15 @@ const GraphVisualizerPage = () => {
     const [chargeStrength, setChargeStrength] = useState(-350); // 大幅增强节点间排斥力使独立群组更紧凑
     const [viewMode, setViewMode] = useState('tag_hierarchy'); // 新增视图模式: tag_hierarchy 或 document_tags
     const graphRef = useRef();
+
+    // 新增状态用于显示标签相关文档
+    const [relatedDocuments, setRelatedDocuments] = useState([]);
+    const [loadingDocuments, setLoadingDocuments] = useState(false);
+    // 新增状态用于处理选中文档的分块信息
+    const [selectedDocForChunks, setSelectedDocForChunks] = useState(null);
+    const [selectedDocChunks, setSelectedDocChunks] = useState([]);
+    const [chunksLoading, setChunksLoading] = useState(false);
+    const [isChunkModalVisible, setIsChunkModalVisible] = useState(false);
 
     // 获取知识库列表
     useEffect(() => {
@@ -61,6 +70,15 @@ const GraphVisualizerPage = () => {
             }
         }
     }, [graphData]);
+
+    // 当选择新的实体时，如果是TAG类型，获取相关文档
+    useEffect(() => {
+        if (selectedEntity && selectedEntity.type === 'TAG') {
+            fetchTagRelatedDocuments(selectedEntity.id);
+        } else {
+            setRelatedDocuments([]);
+        }
+    }, [selectedEntity]);
 
     const fetchKnowledgeBases = async () => {
         try {
@@ -118,6 +136,35 @@ const GraphVisualizerPage = () => {
         }
     };
 
+    // 新增：获取标签相关的文档
+    const fetchTagRelatedDocuments = async (tagId) => {
+        setLoadingDocuments(true);
+        try {
+            const response = await axios.get(`/tags/${tagId}/documents`);
+            setRelatedDocuments(response.data || []);
+        } catch (error) {
+            console.error('获取标签关联文档失败:', error);
+            setRelatedDocuments([]);
+        } finally {
+            setLoadingDocuments(false);
+        }
+    };
+
+    // 新增：获取文档分块信息
+    const fetchChunksForSelectedDoc = async (documentId) => {
+        if (!documentId) return;
+        setChunksLoading(true);
+        setSelectedDocChunks([]);
+        try {
+            const response = await axios.get(`/documents/${documentId}/chunks`);
+            setSelectedDocChunks(response.data || []);
+        } catch (error) {
+            console.error(`获取文档 ${documentId} 的块信息失败:`, error);
+        } finally {
+            setChunksLoading(false);
+        }
+    };
+
     const handleSearch = async () => {
         if (!searchTerm.trim()) return;
 
@@ -140,16 +187,6 @@ const GraphVisualizerPage = () => {
     const handleNodeClick = (node) => {
         setSelectedEntity(node);
 
-        // 确保有相关内容时显示抽屉
-        if (node.related_content) {
-            setContentText(node.related_content);
-            setContentDrawerVisible(true);
-        } else if (node.description) {
-            // 如果没有related_content但有description，也显示在抽屉中
-            setContentText(node.description);
-            setContentDrawerVisible(true);
-        }
-
         // 高亮显示相关连接并居中显示
         if (graphRef.current) {
             graphRef.current.centerAt(node.x, node.y, 800);
@@ -158,6 +195,19 @@ const GraphVisualizerPage = () => {
 
         // 添加日志以便调试
         console.log("点击节点:", node);
+    };
+
+    // 新增：处理查看文档分块
+    const handleViewChunks = (document) => {
+        setSelectedDocForChunks(document);
+        setIsChunkModalVisible(true);
+        fetchChunksForSelectedDoc(document.id);
+    };
+
+    const handleCancelChunkModal = () => {
+        setIsChunkModalVisible(false);
+        setSelectedDocForChunks(null);
+        setSelectedDocChunks([]);
     };
 
     const toggleFullscreen = () => {
@@ -224,15 +274,6 @@ const GraphVisualizerPage = () => {
 
             // 重启模拟
             graphRef.current.d3ReheatSimulation();
-
-            // 打印当前力学参数
-            console.log("力学参数:", {
-                linkDistance,
-                chargeStrength,
-                forceCollide: 0.8,
-                forceX: 0.05,
-                forceY: 0.05
-            });
         }
 
         // 稍后居中到标签节点
@@ -349,6 +390,46 @@ const GraphVisualizerPage = () => {
         ctx.lineTo(x + width / 2, y - height / 2 + foldSize);
     };
 
+    // 文档列表列定义
+    const documentColumns = [
+        {
+            title: 'ID',
+            dataIndex: 'id',
+            key: 'id',
+            width: 60,
+        },
+        {
+            title: '文件名',
+            dataIndex: 'source',
+            key: 'source',
+            width: 240,
+            ellipsis: false,
+            render: (text) => (
+                <div style={{
+                    fontSize: '12px',
+                    lineHeight: '1.4',
+                    wordBreak: 'break-all',
+                    wordWrap: 'break-word'
+                }}>
+                    {text}
+                </div>
+            )
+        },
+        {
+            title: '操作',
+            key: 'actions',
+            width: 80,
+            align: 'center',
+            render: (_, record) => (
+                <Button
+                    type="text"
+                    icon={<EyeOutlined />}
+                    onClick={() => handleViewChunks(record)}
+                />
+            ),
+        },
+    ];
+
     return (
         <div className="graph-page" style={{ height: fullscreen ? '100vh' : 'auto' }}>
             <Card
@@ -376,7 +457,7 @@ const GraphVisualizerPage = () => {
                     />
                 }
             >
-                <div style={{ marginBottom: 16 }}>
+                <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
                     <Space align="center" wrap>
                         <Select
                             style={{ width: 200 }}
@@ -442,34 +523,58 @@ const GraphVisualizerPage = () => {
                                 ))}
                             </Select>
                         </Tooltip>
+                    </Space>
 
-                        <Space>
-                            <Tooltip title="总是显示标签文字">
-                                <Switch
-                                    checkedChildren="标签"
-                                    unCheckedChildren="标签"
-                                    checked={showLabels}
-                                    onChange={setShowLabels}
-                                    size="small"
-                                />
-                            </Tooltip>
+                    {/* 节点布局调整控件 - 移到顶部工具栏右侧 */}
+                    <Space align="center">
+                        <Tooltip title="总是显示标签文字">
+                            <Switch
+                                checkedChildren="标签"
+                                unCheckedChildren="标签"
+                                checked={showLabels}
+                                onChange={setShowLabels}
+                                size="small"
+                            />
+                        </Tooltip>
 
-                            <Tooltip title="居中显示标签">
-                                <Button
-                                    icon={<ZoomInOutlined />}
-                                    size="small"
-                                    onClick={centerOnTags}
-                                />
-                            </Tooltip>
+                        <Tooltip title="居中显示标签">
+                            <Button
+                                icon={<ZoomInOutlined />}
+                                size="small"
+                                onClick={centerOnTags}
+                            />
+                        </Tooltip>
 
-                            <Tooltip title="重置图表布局">
-                                <Button
-                                    icon={<ReloadOutlined />}
-                                    size="small"
-                                    onClick={resetLayout}
+                        <Tooltip title="重置图表布局">
+                            <Button
+                                icon={<ReloadOutlined />}
+                                size="small"
+                                onClick={resetLayout}
+                            />
+                        </Tooltip>
+
+                        <Tooltip title="节点布局调整">
+                            <Space>
+                                <Text style={{ fontSize: '12px' }}>间距:</Text>
+                                <Slider
+                                    min={30}
+                                    max={200}
+                                    value={linkDistance}
+                                    onChange={(value) => setLinkDistance(value)}
+                                    onAfterChange={resetLayout}
+                                    style={{ width: 80 }}
                                 />
-                            </Tooltip>
-                        </Space>
+                                <Text style={{ fontSize: '12px' }}>排斥力:</Text>
+                                <Slider
+                                    min={-200}
+                                    max={-30}
+                                    value={chargeStrength}
+                                    onChange={(value) => setChargeStrength(value)}
+                                    onAfterChange={resetLayout}
+                                    style={{ width: 80 }}
+                                />
+                            </Space>
+                        </Tooltip>
 
                         <Tooltip title={viewMode === 'tag_hierarchy' ?
                             "图中节点表示标签层级结构和关系" :
@@ -480,11 +585,12 @@ const GraphVisualizerPage = () => {
                 </div>
 
                 <div style={{
-                    height: fullscreen ? 'calc(100vh - 180px)' : '55vh', // 图表高度从70vh减小到55vh
+                    height: fullscreen ? 'calc(100vh - 180px)' : '45vh', // 减小图表高度以为底部腾出空间
                     position: 'relative',
                     border: '1px solid #f0f0f0',
                     borderRadius: '4px',
-                    overflow: 'hidden'
+                    overflow: 'hidden',
+                    marginBottom: '16px' // 与底部区域保持一致的间距
                 }}>
                     {loading ? (
                         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
@@ -543,88 +649,116 @@ const GraphVisualizerPage = () => {
                     )}
                 </div>
 
-                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between' }}>
-                    {/* 图表参数调整 */}
-                    <div style={{ width: '100%', maxWidth: '600px' }}>
-                        <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                            <div>
-                                <Text>节点间距调整:</Text>
-                                <Slider
-                                    min={30} // 最小值从50减小到30
-                                    max={200} // 最大值从300减小到200
-                                    value={linkDistance}
-                                    onChange={(value) => setLinkDistance(value)}
-                                    onAfterChange={resetLayout}
-                                    style={{ width: 200, marginLeft: 16 }}
-                                />
+                {/* 重新设计的下部区域：左侧显示节点信息，右侧显示相关文档 */}
+                <div style={{ marginTop: '0', display: 'flex', gap: '16px', marginBottom: '16px' }}>
+                    {/* 左侧：节点信息 */}
+                    <div style={{ flex: '1', minWidth: '25%', maxWidth: '25%' }}>
+                        {selectedEntity ? (
+                            <div style={{ padding: 12, background: '#f9f9f9', borderRadius: 4 }}>
+                                <Space align="start">
+                                    <Title level={5}>{selectedEntity.label}</Title>
+                                    {selectedEntity.tag_type && (
+                                        <Tag color={selectedEntity.color}>{selectedEntity.tag_type}</Tag>
+                                    )}
+                                </Space>
+                                <Paragraph ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}>
+                                    {selectedEntity.description || '无描述'}
+                                </Paragraph>
                             </div>
-                            <div>
-                                <Text>节点排斥力:</Text>
-                                <Slider
-                                    min={-200}
-                                    max={-30}
-                                    value={chargeStrength}
-                                    onChange={(value) => setChargeStrength(value)}
-                                    onAfterChange={resetLayout}
-                                    style={{ width: 200, marginLeft: 16 }}
-                                />
-                            </div>
-                        </Space>
+                        ) : (
+                            <Empty description="点击节点查看详情" style={{ marginBottom: '16px' }} />
+                        )}
                     </div>
 
-                    {/* 选中节点信息 - 简化显示 */}
-                    {selectedEntity && (
-                        <div style={{ padding: 12, background: '#f9f9f9', borderRadius: 4, maxWidth: '400px', minWidth: '300px' }}>
-                            <Space align="start">
-                                <Title level={5}>{selectedEntity.label}</Title> {/* 从level 4改为level 5，减小标题大小 */}
-                                {selectedEntity.tag_type && (
-                                    <Tag color={selectedEntity.color}>{selectedEntity.tag_type}</Tag>
-                                )}
-                            </Space>
-
-                            <Paragraph ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}>{selectedEntity.description}</Paragraph> {/* 添加ellipsis让描述可折叠 */}
-
-                            {selectedEntity.related_content && (
-                                <Button
-                                    type="primary"
-                                    size="small" // 减小按钮大小
-                                    icon={<FileTextOutlined />}
-                                    onClick={() => {
-                                        setContentText(selectedEntity.related_content);
-                                        setContentDrawerVisible(true);
-                                    }}
-                                >
-                                    查看文档
-                                </Button>
+                    {/* 右侧：相关文档列表 */}
+                    <div style={{ flex: '2', minWidth: '50%' }}>
+                        <Card
+                            size="small"
+                            title={
+                                <Space>
+                                    <FileTextOutlined />
+                                    {selectedEntity?.type === 'TAG'
+                                        ? `标签「${selectedEntity.label}」相关文档`
+                                        : "相关文档"}
+                                </Space>
+                            }
+                            bodyStyle={{ padding: '8px', maxHeight: '250px', overflowY: 'auto' }}
+                            style={{ height: '100%' }}
+                        >
+                            {selectedEntity?.type === 'TAG' ? (
+                                loadingDocuments ? (
+                                    <div style={{ textAlign: 'center', padding: '20px' }}><Spin tip="加载文档..." /></div>
+                                ) : relatedDocuments.length > 0 ? (
+                                    <Table
+                                        columns={documentColumns}
+                                        dataSource={relatedDocuments}
+                                        rowKey="id"
+                                        size="small"
+                                        pagination={{ pageSize: 5, size: 'small' }}
+                                    />
+                                ) : (
+                                    <Empty description="暂无相关文档" />
+                                )
+                            ) : (
+                                <Empty description="请选择一个标签节点查看相关文档" />
                             )}
-                        </div>
-                    )}
-                </div>
-            </Card>
-
-            <Drawer
-                title={selectedEntity ? `${selectedEntity.label}的详细信息` : "详细信息"}
-                placement="right"
-                onClose={() => setContentDrawerVisible(false)}
-                open={contentDrawerVisible}
-                width={500}
-            >
-                <div style={{ whiteSpace: 'pre-wrap' }}>
-                    {contentText || "没有可显示的内容"}
-                </div>
-
-                {selectedEntity && selectedEntity.type === 'TAG' && (
-                    <div style={{ marginTop: 16 }}>
-                        <Button type="primary" onClick={() => {
-                            // 这里可以添加查询标签相关文档的API调用
-                            console.log("查询相关文档:", selectedEntity.id);
-                            // 示例：fetchTagDocuments(selectedEntity.id);
-                        }}>
-                            查看相关文档
-                        </Button>
+                        </Card>
                     </div>
-                )}
-            </Drawer>
+                </div>
+
+                {/* 分块信息模态框 */}
+                <Modal
+                    title={`文档分块详情: ${selectedDocForChunks?.source || 'N/A'}`}
+                    visible={isChunkModalVisible}
+                    onCancel={handleCancelChunkModal}
+                    footer={[<Button key="back" onClick={handleCancelChunkModal}>关闭</Button>]}
+                    width="80%"
+                    destroyOnClose
+                    bodyStyle={{ padding: '12px' }}
+                >
+                    {chunksLoading ? (
+                        <div style={{ textAlign: 'center', padding: '50px' }}><Spin tip="加载分块信息..." /></div>
+                    ) : (
+                        <List
+                            itemLayout="vertical"
+                            size="small"
+                            dataSource={selectedDocChunks}
+                            pagination={{ pageSize: 5, size: 'small' }}
+                            renderItem={(chunk) => (
+                                <List.Item key={chunk.chunk_index} style={{ background: '#f7f9fc', marginBottom: '8px', padding: '12px', borderRadius: '8px' }}>
+                                    <List.Item.Meta
+                                        title={<Text strong>块 {chunk.chunk_index}</Text>}
+                                        description={
+                                            <Row gutter={[8, 8]}>
+                                                <Col span={24} md={12}>
+                                                    <Space>
+                                                        <Tag color="cyan">Token: {chunk.token_count || 'N/A'}</Tag>
+                                                        <Tag color="purple">类型: {chunk.structural_type || 'N/A'}</Tag>
+                                                    </Space>
+                                                </Col>
+                                            </Row>
+                                        }
+                                    />
+                                    <Paragraph
+                                        ellipsis={{ rows: 4, expandable: true, symbol: '展开' }}
+                                        style={{
+                                            maxHeight: '150px',
+                                            overflowY: 'auto',
+                                            background: '#fff',
+                                            padding: '12px',
+                                            border: '1px solid #eee',
+                                            borderRadius: '6px',
+                                            marginTop: '8px'
+                                        }}
+                                    >
+                                        {chunk.content}
+                                    </Paragraph>
+                                </List.Item>
+                            )}
+                        />
+                    )}
+                </Modal>
+            </Card>
         </div>
     );
 };
