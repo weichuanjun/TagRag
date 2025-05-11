@@ -95,6 +95,9 @@ class AgentManager:
         except Exception as e:
              logger.error(f"Failed to initialize default embedding model {T_CUS_EMBEDDING_MODEL}: {e}")
              self.embedding_instance = None # Handle potential init failure
+        
+        self.retrieved_results = []  # 存储检索到的结果
+        self.retrieval_agent_response = None  # 存储retrieval_agent的原始响应
     
     def log_thinking_process(self, step_info: str, agent_name: str, level: str = "INFO", status: Optional[str] = None, **kwargs):
         """Helper method to log steps in the thinking process."""
@@ -684,6 +687,7 @@ class AgentManager:
             self.thinking_process.append({"task": "OriginalRetrieval", "retrieved_count": len(retrieval_results)})
             
             retrieval_context = ""
+            formatted_results = []
             for i, result in enumerate(retrieval_results):
                 retrieval_context += f"文档 {i+1}:\n"
                 # 添加键存在性检查，避免KeyError
@@ -699,6 +703,17 @@ class AgentManager:
                 if metadata.get('knowledge_base_id'):
                     retrieval_context += f"知识库ID: {metadata['knowledge_base_id']}\n"
                 retrieval_context += "\n"
+                
+                # 构建格式化的检索结果，存储以供前端使用
+                formatted_results.append({
+                    'chunk_id': f'result-{i}',
+                    'document_source': metadata.get('source', '未知'),
+                    'content': content,
+                    'score': result.get('score', None)
+                })
+            
+            # 存储检索结果
+            self.retrieved_results = formatted_results
             
             code_analysis_context = ""
             code_snippets = []
@@ -799,6 +814,24 @@ class AgentManager:
                 # 仅返回答案和思考过程，让main.py处理代码片段
                 return answer
             else:
+                # 构建retrieval_agent_response
+                from datetime import datetime
+                self.retrieval_agent_response = f"""
+retrieval_agent (to 用户代理):
+
+### 用户问题分析
+用户询问"{user_query[:50]}..."，我们需要提供相关的信息。
+
+### 检索结果评估
+检索到了{len(retrieval_results)}个相关结果，其中包含了以下关键信息：
+{retrieval_context}
+
+### 整理检索到的信息
+{answer}
+
+--------------------------------------------------------------------------------
+{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
                 return answer
 
         except Exception as e:

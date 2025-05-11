@@ -150,3 +150,256 @@ code {
 .markdown-content th {
     background-color: #fafafa;
 }
+
+/* 添加淡入效果 */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 添加淡出效果 */
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    to {
+        opacity: 0;
+        transform: translateY(-5px);
+    }
+}
+
+/* 添加处理信息块的样式 */
+.processing-info-container {
+    padding: 10px 0;
+    position: relative;
+    min-width: 280px;
+}
+
+.processing-info-item {
+    animation: fadeIn 0.3s ease-in-out;
+    position: relative;
+    padding: 5px 12px !important;
+    margin-bottom: 8px;
+    border-left: 2px solid #4267B2;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace !important;
+    line-height: 1.5 !important;
+    font-size: 11px !important;
+    background-color: rgba(245, 247, 250, 0.85);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+    border-radius: 2px;
+    white-space: nowrap;
+    transition: all 0.3s ease;
+    min-height: 16px;
+    min-width: 260px;
+    display: flex;
+    align-items: center;
+}
+
+.processing-info-item .tag-label {
+    display: inline-block;
+    font-weight: 600;
+    color: #4267B2;
+    margin-right: 6px;
+    font-size: 10px;
+    opacity: 0.9;
+    letter-spacing: 0.3px;
+}
+
+.processing-info-item .process-description {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #333;
+    max-width: calc(100% - 60px);
+}
+
+/* 呼吸效果动画 - 应用于整个对话框 */
+@keyframes breathing {
+    0% {
+        box-shadow: 0 1px 3px rgba(66, 103, 178, 0.15);
+    }
+
+    50% {
+        box-shadow: 0 1px 10px rgba(66, 103, 178, 0.3);
+    }
+
+    100% {
+        box-shadow: 0 1px 3px rgba(66, 103, 178, 0.15);
+    }
+}
+
+/* 类型样式定制 - 边框色 */
+.processing-info-item.tq-step {
+    border-left-color: #007bff;
+}
+
+.processing-info-item.tag-match {
+    border-left-color: #28a745;
+}
+
+.processing-info-item.tcus-step {
+    border-left-color: #6610f2;
+}
+
+.processing-info-item.retrieval {
+    border-left-color: #fd7e14;
+}
+
+/* 处理信息标题 */
+.processing-title {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    position: relative;
+    padding: 0 2px;
+}
+
+.processing-title::after {
+    content: "";
+    flex-grow: 1;
+    height: 1px;
+    background: linear-gradient(to right, rgba(66, 103, 178, 0.3), transparent);
+    margin-left: 10px;
+}
+
+/* 技术风格元素 */
+.tech-badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background-color: rgba(66, 103, 178, 0.1);
+    font-size: 10px;
+    margin-left: 8px;
+    font-weight: 500;
+    color: #4267B2;
+    letter-spacing: 0.5px;
+    border: 1px solid rgba(66, 103, 178, 0.15);
+}
+
+/* 系统消息细节优化 */
+.system-message-content {
+    max-width: 100%;
+    width: 100%;
+    min-width: 300px;
+    animation: breathing 3s ease-in-out infinite;
+}
+
+/* 打字机效果 */
+.typewriter-effect {
+    overflow: hidden;
+    border-right: 2px solid rgba(66, 103, 178, 0.5);
+    white-space: nowrap;
+    margin: 0;
+    animation: typing 3.5s steps(40, end), blink-caret 0.75s step-end infinite;
+}
+
+@keyframes typing {
+    from {
+        width: 0
+    }
+
+    to {
+        width: 100%
+    }
+}
+
+@keyframes blink-caret {
+
+    from,
+    to {
+        border-color: transparent
+    }
+
+    50% {
+        border-color: rgba(66, 103, 178, 0.5)
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    to {
+        opacity: 0;
+        transform: translateY(-5px);
+    }
+}
+
+.system-message-appear {
+    animation: systemMessageAppear 0.4s ease-in-out;
+}
+
+@keyframes systemMessageAppear {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 脉冲动画效果 */
+.pulse {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(66, 103, 178, 0.4);
+    }
+
+    70% {
+        box-shadow: 0 0 0 6px rgba(66, 103, 178, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(66, 103, 178, 0);
+    }
+}
+
+/* 科技风格的滚动条 */
+.chat-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.chat-container::-webkit-scrollbar-track {
+    background: rgba(240, 242, 245, 0.6);
+    border-radius: 8px;
+}
+
+.chat-container::-webkit-scrollbar-thumb {
+    background: rgba(66, 103, 178, 0.2);
+    border-radius: 8px;
+}
+
+.chat-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(66, 103, 178, 0.3);
+}

@@ -284,7 +284,7 @@ async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
             agent_manager.db = db
             
             # 获取回答
-            result = await agent_manager.generate_answer_original(
+            answer = await agent_manager.generate_answer_original(
                 request.query,
                 request.use_code_analysis,
                 code_analyzer,
@@ -296,6 +296,7 @@ async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
             )
             
             # 在原始模式下，如果启用了代码检索，返回代码片段
+            code_snippets = []
             if request.use_code_retrieval:
                 # 从agent_manager获取code_snippets
                 code_retrieval_service = CodeRetrievalService(db)
@@ -306,44 +307,26 @@ async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
                     repo = db.query(CodeRepository).filter(CodeRepository.id == request.repository_id).first()
                     if repo:
                         # 记录代码检索的知识库信息
-                        kb_id = repo.knowledge_base_id or request.knowledge_base_id or request.repository_id
-                        logger.info(f"使用知识库ID {kb_id} 进行代码检索")
-                    
-                    code_query = " ".join(code_keywords)
-                    code_results = await code_retrieval_service.retrieve_code_by_query(
-                        query=code_query,
-                        repository_id=request.repository_id,
-                        top_k=3
-                    )
-                    
-                    # 将结果转换为Pydantic模型
-                    code_snippets = []
-                    for snippet in code_results:
-                        code_snippets.append(CodeSnippetInfo(
-                            component_id=snippet.get("id"),
-                            file_path=snippet.get("file_path"),
-                            name=snippet.get("name"),
-                            type=snippet.get("type"),
-                            code=snippet.get("code"),
-                            signature=snippet.get("signature"),
-                            start_line=snippet.get("start_line"),
-                            end_line=snippet.get("end_line"),
-                            score=snippet.get("similarity_score"),
-                            repository_id=request.repository_id
-                        ))
-                    
-                    # 返回TagRAG格式的响应，但包含原始回答
-                    return TagRAGChatResponse(
-                        answer=result,
-                        thinking_process=agent_manager.get_thinking_process(),
-                        referenced_tags=[],  # 原始模式没有标签
-                        referenced_excerpts=[],  # 原始模式没有摘录
-                        code_snippets=code_snippets,
-                        user_query=request.query,
-                        knowledge_base_id=request.knowledge_base_id
-                    )
+                        logger.info(f"代码检索使用仓库: {repo.name} (ID: {repo.id})")
+                        code_snippets = await code_retrieval_service.retrieve_code_by_query(
+                            " ".join(code_keywords),
+                            request.repository_id,
+                            top_k=3
+                        )
             
-            # 如果不使用代码检索，返回普通字符串结果
+            # 构建与TagRAG模式相似的响应
+            thinking_process = agent_manager.thinking_process if hasattr(agent_manager, "thinking_process") else []
+            retrieval_agent_response = agent_manager.retrieval_agent_response if hasattr(agent_manager, "retrieval_agent_response") else None
+            
+            result = {
+                "answer": answer,
+                "thinking_process": thinking_process,
+                "referenced_tags": [],  # 非TagRAG模式无标签
+                "referenced_excerpts": agent_manager.retrieved_results if hasattr(agent_manager, "retrieved_results") else [],
+                "code_snippets": code_snippets,
+                "retrieval_agent_response": retrieval_agent_response  # 添加retrieval_agent_response字段
+            }
+            
             return result
     except Exception as e:
         logger.error(f"Error processing question: {str(e)}")

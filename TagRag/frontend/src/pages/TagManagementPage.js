@@ -34,9 +34,12 @@ const TagManagementPage = () => {
     const [selectedDocChunks, setSelectedDocChunks] = useState([]);
     const [chunksLoading, setChunksLoading] = useState(false);
 
-    // 获取标签关联的文档列表 - 移到了fetchTags前面
+    // 获取标签关联的文档列表
     const fetchTagDocuments = useCallback(async (tagId) => {
         if (!tagId) return;
+
+        // 如果已经在加载中，不再重复请求
+        if (loadingDocuments[tagId]) return;
 
         setLoadingDocuments(prev => ({ ...prev, [tagId]: true }));
         try {
@@ -48,16 +51,19 @@ const TagManagementPage = () => {
                 ...prev,
                 [tagId]: documents
             }));
-
-            // 文档信息更新后，重新检查标签是否可删除
-            checkTagDeletable(tagId);
         } catch (error) {
+            // 静默处理错误，将空数组设置为结果
             console.error(`获取标签 ${tagId} 的关联文档失败:`, error);
-            message.error('获取标签关联文档失败');
+            setTagDocumentsMap(prev => ({
+                ...prev,
+                [tagId]: [] // 设置为空数组而不是未定义，表示已尝试加载
+            }));
+            // 移除错误消息提示
+            // message.error('获取标签关联文档失败');
         } finally {
             setLoadingDocuments(prev => ({ ...prev, [tagId]: false }));
         }
-    }, []);
+    }, [loadingDocuments]);
 
     // 检查标签是否可以安全删除并缓存结果
     const checkTagDeletable = useCallback(async (tagId) => {
@@ -109,38 +115,32 @@ const TagManagementPage = () => {
             // 清空之前的文档映射
             setTagDocumentsMap({});
 
-            // 获取每个标签关联的文档
-            tagList.forEach(tag => {
-                fetchTagDocuments(tag.id);
-            });
+            // 移除自动获取每个标签关联文档的逻辑
+            // tagList.forEach(tag => {
+            //     fetchTagDocuments(tag.id);
+            // });
 
-            // 重置标签删除状态
+            // 重置标签删除状态 - 但不主动发送请求检查
             const newDeleteStatus = {};
-            // 为每个标签初始化可删除状态为未知（null）
             tagList.forEach(tag => {
                 newDeleteStatus[tag.id] = null;
             });
             setTagDeleteStatus(newDeleteStatus);
 
-            // 只对所有标签进行一次批量检查
-            const tagsToCheck = tagList.slice(0, 5); // 限制只检查前5个标签，避免大量请求
-            tagsToCheck.forEach(tag => {
-                checkTagDeletable(tag.id);
-            });
-
-            // 获取可删除标签的数量 - 只调用一次
-            fetchDeletableTagsCount();
+            // 移除自动检查每个标签是否可删除的逻辑
+            // 不再主动调用fetchDeletableTagsCount()
         } catch (error) {
             console.error('获取标签列表失败:', error);
             message.error('获取标签列表失败');
         } finally {
             setLoading(false);
         }
-    }, [selectedKB, fetchTagDocuments, fetchDeletableTagsCount, checkTagDeletable]);
+    }, [selectedKB]);
 
     // 判断标签是否可以安全删除（从缓存状态获取）
     const canSafelyDeleteTag = (tagId) => {
-        // 所有标签都可以删除
+        // 修改为始终返回true，因为现在只在实际删除时才进行检查
+        // 不再预先检查每个标签是否可删除
         return true;
     };
 
@@ -148,12 +148,18 @@ const TagManagementPage = () => {
     const handleBatchSafeDelete = async () => {
         try {
             setBatchDeleteLoading(true);
+            message.loading('正在检查可删除标签...');
 
+            // 只在用户点击批量删除按钮时才获取可删除标签
             // 获取所有可删除的标签
             const response = await axios.get('/tags/deletable');
             const deletableTags = response.data.deletable_tags || [];
+            const deletableCount = deletableTags.length;
 
-            if (deletableTags.length === 0) {
+            // 更新可删除标签计数
+            setDeletableTagsCount(deletableCount);
+
+            if (deletableCount === 0) {
                 message.info('没有可以安全删除的标签');
                 setBatchDeleteLoading(false);
                 return;
@@ -164,7 +170,7 @@ const TagManagementPage = () => {
                 title: '批量安全删除标签',
                 content: (
                     <div>
-                        <p>确定要删除以下 {deletableTags.length} 个无关联文档且非父标签的标签吗？此操作不可撤销。</p>
+                        <p>确定要删除以下 {deletableCount} 个无关联文档且非父标签的标签吗？此操作不可撤销。</p>
                         <div style={{ maxHeight: '200px', overflow: 'auto', marginTop: '10px' }}>
                             {deletableTags.map(tag => (
                                 <Tag key={tag.id} color={tag.color} style={{ margin: '2px' }}>
@@ -228,15 +234,11 @@ const TagManagementPage = () => {
         fetchKnowledgeBases();
         fetchTags();
 
-        // 定时获取可删除标签数量，每30秒更新一次
-        const deletableTagsTimer = setInterval(() => {
-            fetchDeletableTagsCount();
-        }, 30000); // 30秒
-
+        // 移除定时获取可删除标签数量的逻辑
         return () => {
-            clearInterval(deletableTagsTimer);
+            // 清除任何可能的timer
         };
-    }, [fetchTags, fetchDeletableTagsCount]);
+    }, [fetchTags]);
 
     // 当选择的知识库变化时，重新获取标签
     useEffect(() => {
@@ -311,7 +313,10 @@ const TagManagementPage = () => {
                 return;
             }
 
-            // 检查标签状态
+            // 显示检查中的消息
+            message.loading('检查标签状态...');
+
+            // 只在用户点击删除按钮时才检查标签状态
             const response = await axios.get(`/tags/${tagId}/can-delete`);
             const { has_documents, has_children, document_count } = response.data;
 
@@ -432,6 +437,25 @@ const TagManagementPage = () => {
         const documents = tagDocumentsMap[tagId] || [];
         const isLoading = loadingDocuments[tagId];
 
+        // 检查是否已经尝试加载文档
+        const hasLoadedOrTriedToLoad = tagId in tagDocumentsMap;
+
+        if (!hasLoadedOrTriedToLoad) {
+            // 如果还没有尝试加载该标签的文档
+            return (
+                <Button
+                    type="link"
+                    size="small"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        fetchTagDocuments(tagId);
+                    }}
+                >
+                    查看关联文档
+                </Button>
+            );
+        }
+
         if (isLoading) {
             return <Text type="secondary">加载文档中...</Text>;
         }
@@ -521,7 +545,6 @@ const TagManagementPage = () => {
         {
             title: '关联文档',
             key: 'documents',
-            sorter: (a, b) => (tagDocumentsMap[a.id]?.length || 0) - (tagDocumentsMap[b.id]?.length || 0),
             render: (_, record) => renderTagDocuments(record.id),
         },
         {
@@ -581,9 +604,8 @@ const TagManagementPage = () => {
                             icon={<DeleteOutlined />}
                             onClick={handleBatchSafeDelete}
                             loading={batchDeleteLoading}
-                            disabled={deletableTagsCount === 0}
                         >
-                            批量安全删除 ({deletableTagsCount})
+                            批量安全删除{deletableTagsCount > 0 ? ` (${deletableTagsCount})` : ''}
                         </Button>
                     </Space>
                 }
