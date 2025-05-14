@@ -9,6 +9,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 from models import CodeRepository, CodeFile, CodeComponent, ComponentDependency
+from langchain.schema import Document  # 添加Document导入
 
 logger = logging.getLogger(__name__)
 
@@ -983,7 +984,7 @@ class EnhancedCodeAnalyzer:
         return hasher.hexdigest()
     
     def _calculate_python_complexity(self, node) -> float:
-        """简单估计Python代码复杂度"""
+        """计算Python代码复杂度"""
         complexity = 1.0
         
         # 递归计算条件语句和循环
@@ -996,7 +997,7 @@ class EnhancedCodeAnalyzer:
         return complexity
     
     def _get_python_return_hints(self, node) -> List[str]:
-        """尝试从Python函数中提取返回值提示"""
+        """获取Python函数返回类型提示"""
         returns = []
         
         # 查找return语句
@@ -1007,4 +1008,147 @@ class EnhancedCodeAnalyzer:
                 elif isinstance(child.value, ast.Constant):
                     returns.append(str(type(child.value.value).__name__))
         
-        return returns 
+        return returns
+    
+    # 新增功能：将代码组件转换为文档对象，用于向量存储
+    async def convert_components_to_documents(self, repo_id: int) -> List[Document]:
+        """将代码组件转换为文档对象，以便存储到向量数据库
+        
+        Args:
+            repo_id: 代码库ID
+            
+        Returns:
+            List[Document]: 文档对象列表
+        """
+        logger.info(f"开始将仓库 {repo_id} 的代码组件转换为向量文档...")
+        documents = []
+        
+        try:
+            # 获取代码库所有组件
+            components = self.db_session.query(CodeComponent).join(
+                CodeFile, CodeComponent.file_id == CodeFile.id
+            ).filter(
+                CodeFile.repository_id == repo_id
+            ).all()
+            
+            logger.info(f"找到 {len(components)} 个代码组件")
+            
+            for component in components:
+                # 获取组件对应的文件
+                file = self.db_session.query(CodeFile).filter(CodeFile.id == component.file_id).first()
+                if not file:
+                    logger.warning(f"组件 {component.id} 的文件记录丢失，跳过")
+                    continue
+                
+                # 构建文档内容：包括组件代码和相关信息
+                # 确保有可搜索的上下文
+                content_parts = []
+                
+                # 添加组件名称和类型
+                content_parts.append(f"组件名称: {component.name}")
+                content_parts.append(f"组件类型: {component.type}")
+                
+                # 添加组件签名（如果有）
+                if component.signature:
+                    content_parts.append(f"签名: {component.signature}")
+                
+                # 添加组件元数据（如果有）
+                if component.component_metadata:
+                    # 将元数据转为字符串
+                    try:
+                        if isinstance(component.component_metadata, dict):
+                            for key, value in component.component_metadata.items():
+                                if key == "docstring" and value:
+                                    content_parts.append(f"文档: {value}")
+                                elif key == "args" and value:
+                                    content_parts.append(f"参数: {', '.join(value)}")
+                                elif key == "returns" and value:
+                                    content_parts.append(f"返回: {', '.join(value)}")
+                    except:
+                        pass
+                
+                # 添加代码本身
+                if component.code:
+                    content_parts.append(f"\n代码:\n{component.code}")
+                else:
+                    logger.warning(f"组件 {component.id} ({component.name}) 没有代码内容，跳过")
+                    continue  # 如果没有代码，跳过此组件
+                
+                # 合并所有内容部分
+                full_content = "\n".join(content_parts)
+                
+                # 构建元数据
+                metadata = {
+                    "component_id": component.id,
+                    "component_name": component.name,
+                    "component_type": component.type,
+                    "file_id": component.file_id,
+                    "file_path": file.file_path,
+                    "language": file.language,
+                    "repository_id": repo_id,
+                    "content_type": "code",  # 标记为代码文档
+                    "importance": component.importance_score or 0.0,
+                    "complexity": component.complexity or 0.0,
+                    "start_line": component.start_line,
+                    "end_line": component.end_line
+                }
+                
+                # 创建文档对象
+                doc = Document(
+                    page_content=full_content,
+                    metadata=metadata
+                )
+                documents.append(doc)
+                
+            logger.info(f"成功转换 {len(documents)} 个代码组件为文档对象")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"转换代码组件为文档时出错: {str(e)}")
+            return []
+
+    # 新增功能：分析代码并存储到向量数据库
+    async def analyze_and_vectorize_repository(self, repo_path: str, repo_name: Optional[str] = None, 
+                                             knowledge_base_id: Optional[int] = None) -> Dict[str, Any]:
+        """分析代码库并将组件存储到向量数据库
+        
+        Args:
+            repo_path: 代码仓库路径
+            repo_name: 仓库名称，默认使用目录名
+            knowledge_base_id: 关联的知识库ID
+            
+        Returns:
+            Dict: 处理结果
+        """
+        try:
+            # 1. 分析代码库
+            repo_id = await self.analyze_repository(repo_path, repo_name, knowledge_base_id)
+            
+            # 2. 将代码组件转换为可向量化的文档
+            documents = await self.convert_components_to_documents(repo_id)
+            
+            if not documents:
+                return {
+                    "status": "warning",
+                    "repository_id": repo_id,
+                    "message": f"分析成功但没有生成可向量化的文档",
+                    "document_count": 0
+                }
+            
+            # 3. 返回文档，由调用者存储到向量数据库
+            # 不在这里直接存储，避免循环依赖
+            return {
+                "status": "success",
+                "repository_id": repo_id,
+                "message": f"代码库分析完成，生成了 {len(documents)} 个文档",
+                "documents": documents,
+                "document_count": len(documents)
+            }
+            
+        except Exception as e:
+            logger.error(f"分析和向量化代码库时出错: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"处理失败: {str(e)}",
+                "document_count": 0
+            } 

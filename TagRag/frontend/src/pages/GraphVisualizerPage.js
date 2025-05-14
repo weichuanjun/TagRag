@@ -125,6 +125,10 @@ const GraphVisualizerPage = () => {
             if (viewMode === 'tag_hierarchy') {
                 // 标签层级关系视图
                 endpoint = `/graph/tag-relations/${knowledgeBaseId}`;
+                // 将标签类型参数添加到请求中
+                if (params.tag_types) {
+                    endpoint += `?tag_types=${params.tag_types}`;
+                }
             } else {
                 // 原有的文档-标签关系视图
                 endpoint = onlyShowTags
@@ -143,6 +147,10 @@ const GraphVisualizerPage = () => {
             if (!data.links) data.links = [];
 
             console.log(`获取到 ${data.nodes.length} 个节点和 ${data.links.length} 个链接`);
+
+            // 打印一下看看是否有root标签
+            const rootNodes = data.nodes.filter(n => n.hierarchy_level === 'root');
+            console.log(`找到 ${rootNodes.length} 个根标签:`, rootNodes);
 
             // 创建节点ID集合，用于快速查找
             const nodeIds = new Set(data.nodes.map(node => node.id));
@@ -169,6 +177,83 @@ const GraphVisualizerPage = () => {
             // 当节点数量为0时，显示警告
             if (data.nodes.length === 0) {
                 console.warn(`知识库 ${knowledgeBaseId} 没有标签数据`);
+            }
+
+            // 用更可靠的方法检测和标记root标签
+            if (viewMode === 'tag_hierarchy' && data.nodes.length > 0) {
+                // 构建入度映射，记录每个节点被指向的次数
+                const inDegreeMap = {};
+                data.nodes.forEach(node => {
+                    if (node.type === 'TAG') {
+                        inDegreeMap[node.id] = 0; // 初始化入度为0
+                    }
+                });
+
+                // 计算每个节点的入度
+                data.links.forEach(link => {
+                    const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+                    if (inDegreeMap[targetId] !== undefined) {
+                        inDegreeMap[targetId]++;
+                    }
+                });
+
+                // 根据入度标记节点层级
+                const rootTagIds = [];
+                data.nodes.forEach(node => {
+                    if (node.type === 'TAG') {
+                        if (inDegreeMap[node.id] === 0) {
+                            // 入度为0的是根节点
+                            node.hierarchy_level = 'root';
+                            node.color = '#FF6A00'; // 橙色
+                            rootTagIds.push(node.id);
+                        } else {
+                            // 检查是否有子节点
+                            const hasChildren = data.links.some(link => {
+                                const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+                                return sourceId === node.id;
+                            });
+
+                            if (hasChildren) {
+                                node.hierarchy_level = 'branch';
+                                node.color = '#1890FF'; // 蓝色
+                            } else {
+                                node.hierarchy_level = 'leaf';
+                                node.color = '#722ED1'; // 紫色
+                            }
+                        }
+                    }
+                });
+
+                console.log(`识别出的根标签IDs:`, rootTagIds);
+
+                // 如果没有找到根标签，强制指定一个
+                if (rootTagIds.length === 0) {
+                    // 创建一个虚拟根节点
+                    const rootNode = {
+                        id: 'virtual-root',
+                        label: '根标签',
+                        type: 'TAG',
+                        hierarchy_level: 'root',
+                        color: '#FF6A00',
+                        size: 15
+                    };
+                    data.nodes.push(rootNode);
+
+                    // 找出所有入度为0的标签，连接到虚拟根节点
+                    const orphanTags = data.nodes.filter(node =>
+                        node.type === 'TAG' && inDegreeMap[node.id] === 0 && node.id !== 'virtual-root'
+                    );
+
+                    orphanTags.forEach(tag => {
+                        data.links.push({
+                            source: 'virtual-root',
+                            target: tag.id,
+                            type: 'PARENT_OF'
+                        });
+                    });
+
+                    console.log(`创建了虚拟根节点并连接到 ${orphanTags.length} 个孤立标签`);
+                }
             }
 
             setGraphData(data);
@@ -324,25 +409,28 @@ const GraphVisualizerPage = () => {
     const resetLayout = () => {
         if (!graphRef.current) return;
 
+        console.log('重置图表布局');
+
         // 设置强制模拟参数
         if (graphRef.current.d3Force) {
             // 设置节点之间的距离
             graphRef.current.d3Force('link').distance(link => {
                 // 父子关系的链接距离保持较大
                 if (link.type === 'PARENT_OF') {
-                    return linkDistance;
+                    return viewMode === 'tag_hierarchy' ? 60 : 50;
                 }
                 // 其他类型的链接距离较小，促进聚集
-                return linkDistance * 0.6;
+                return viewMode === 'tag_hierarchy' ? 40 : 30;
             });
 
             // 设置节点间的排斥力
-            graphRef.current.d3Force('charge').strength(chargeStrength);
+            const forceStrength = viewMode === 'tag_hierarchy' ? -200 : -100;
+            graphRef.current.d3Force('charge').strength(forceStrength);
 
             // 添加聚类力 - 使相同类型的节点靠近
             graphRef.current.d3Force('collide', d3.forceCollide()
-                .radius(10) // 碰撞半径
-                .strength(0.8) // 碰撞强度
+                .radius(viewMode === 'tag_hierarchy' ? 8 : 10) // 碰撞半径
+                .strength(0.7) // 碰撞强度
             );
 
             // 添加X、Y向心力，使整个图表向中心聚集
@@ -353,93 +441,161 @@ const GraphVisualizerPage = () => {
             graphRef.current.d3ReheatSimulation();
         }
 
-        // 稍后居中到标签节点
+        // 稍后居中到标签节点并适应屏幕
         setTimeout(() => {
-            centerOnTags();
+            if (graphRef.current) {
+                centerOnTags();
+                graphRef.current.zoomToFit(500, 50);
+            }
         }, 800);
     };
 
     // 获取节点样式
     const getNodeCanvasObject = (node, ctx, globalScale) => {
         const label = node.label || '';
-        const fontSize = Math.max(6, node.size ? node.size / 6 : 6); // 减小字体大小
+        const fontSize = Math.max(5, node.size ? node.size / 7 : 5); // 减小字体大小
 
-        // 根据层级简化节点大小
+        // 检查坐标是否为有效数值
+        const isValidCoordinate = (coord) => typeof coord === 'number' && isFinite(coord) && !isNaN(coord);
+        const validX = isValidCoordinate(node.x) ? node.x : 0;
+        const validY = isValidCoordinate(node.y) ? node.y : 0;
+
+        // 根据层级和视图模式调整节点大小
         let nodeR;
-        if (node.hierarchy_level === 'root') {
-            nodeR = 8; // 根节点稍大
-        } else if (node.hierarchy_level === 'branch') {
-            nodeR = 6; // 分支节点中等
+        if (viewMode === 'tag_hierarchy') {
+            // 标签层级视图使用更小的节点，接近文档标签的感觉
+            if (node.hierarchy_level === 'root') {
+                nodeR = 4; // 根节点
+            } else if (node.hierarchy_level === 'branch') {
+                nodeR = 3; // 分支节点
+            } else {
+                nodeR = 3; // 叶节点
+            }
         } else {
-            nodeR = 4; // 叶节点最小
+            // 文档标签视图保持原有大小设置
+            if (node.hierarchy_level === 'root') {
+                nodeR = 3; // 根节点
+            } else if (node.hierarchy_level === 'branch') {
+                nodeR = 3; // 分支节点
+            } else {
+                nodeR = 3; // 叶节点
+            }
         }
 
-        // 绘制不同形状的节点
+        // 开始绘制
         ctx.beginPath();
-        ctx.fillStyle = node.color || '#1890ff';
 
-        // 高亮选中的节点
-        if (selectedEntity && selectedEntity.id === node.id) {
-            ctx.strokeStyle = '#ff6600';
-            ctx.lineWidth = 2;
+        // 使用扁平化的颜色设计
+        if (node.hierarchy_level === 'root') {
+            ctx.fillStyle = node.color || '#FF6A00'; // 橙色根节点
+        } else if (node.hierarchy_level === 'branch') {
+            ctx.fillStyle = node.color || '#1890FF'; // 蓝色分支节点
+        } else if (node.type === 'CONTENT') {
+            ctx.fillStyle = node.color || '#52C41A'; // 绿色内容节点
         } else {
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1;
+            ctx.fillStyle = node.color || '#722ED1'; // 紫色叶节点
         }
 
-        // 简化形状：只用三种形状区分层级
+        // 根据不同层级使用不同形状
         if (node.hierarchy_level === 'root') {
-            // 根节点使用方形
-            drawSquare(ctx, node.x, node.y, nodeR);
+            // 根节点使用菱形
+            drawDiamond(ctx, validX, validY, nodeR * 1.2);
         } else if (node.hierarchy_level === 'branch') {
-            // 分支节点使用三角形
-            drawTriangle(ctx, node.x, node.y, nodeR);
+            // 分支节点使用方形
+            drawSquare(ctx, validX, validY, nodeR * 0.9);
         } else if (node.type === 'CONTENT') {
             // 内容节点使用文档形状
-            drawDocument(ctx, node.x, node.y, nodeR);
+            drawDocument(ctx, validX, validY, nodeR);
         } else {
-            // 叶节点和其他节点使用圆形
-            ctx.arc(node.x, node.y, nodeR, 0, 2 * Math.PI);
+            // 叶节点使用圆形
+            ctx.arc(validX, validY, nodeR, 0, 2 * Math.PI);
         }
 
         ctx.fill();
+
+        // 添加边框效果
+        ctx.beginPath();
+        if (selectedEntity && selectedEntity.id === node.id) {
+            // 选中节点有更明显的边框
+            ctx.strokeStyle = '#ff6600';
+            ctx.lineWidth = 2.5;
+
+            if (node.hierarchy_level === 'root') {
+                drawDiamond(ctx, validX, validY, nodeR * 1.2 + 2);
+            } else if (node.hierarchy_level === 'branch') {
+                drawSquare(ctx, validX, validY, nodeR * 0.9 + 2);
+            } else if (node.type === 'CONTENT') {
+                drawDocument(ctx, validX, validY, nodeR + 2);
+            } else {
+                ctx.arc(validX, validY, nodeR + 2, 0, 2 * Math.PI);
+            }
+        } else {
+            // 非选中节点有细微的边框
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+
+            if (node.hierarchy_level === 'root') {
+                drawDiamond(ctx, validX, validY, nodeR * 1.2);
+            } else if (node.hierarchy_level === 'branch') {
+                drawSquare(ctx, validX, validY, nodeR * 0.9);
+            } else if (node.type === 'CONTENT') {
+                drawDocument(ctx, validX, validY, nodeR);
+            } else {
+                ctx.arc(validX, validY, nodeR, 0, 2 * Math.PI);
+            }
+        }
         ctx.stroke();
 
         // 只在缩放比例足够大时显示标签，或者节点被选中时，或者全局showLabels开启
         const showLabel = showLabels || globalScale > 1.5 || (selectedEntity && selectedEntity.id === node.id);
         if (showLabel) {
-            // 绘制标签文本
-            ctx.fillStyle = 'black';
-            ctx.font = `${fontSize}px Sans-Serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+            try {
+                // 绘制标签文本
+                ctx.font = `${fontSize}px Sans-Serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
 
-            let displayLabel = label;
-            // 如果标签过长，截断
-            if (displayLabel.length > 15) {
-                displayLabel = displayLabel.substring(0, 12) + '...';
+                let displayLabel = label;
+                // 如果标签过长，截断
+                if (displayLabel.length > 15) {
+                    displayLabel = displayLabel.substring(0, 12) + '...';
+                }
+
+                // 如果是内容节点，添加图标
+                if (node.type === 'CONTENT') {
+                    displayLabel = '📄';
+                }
+
+                // 绘制带背景的文本
+                const textWidth = ctx.measureText(displayLabel).width;
+
+                // 半透明背景
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillRect(validX - textWidth / 2 - 4, validY + nodeR + 2, textWidth + 8, fontSize + 6);
+
+                // 白色文字
+                ctx.fillStyle = '#fff';
+                ctx.fillText(displayLabel, validX, validY + nodeR + fontSize / 2 + 5);
+
+                // 如果是根节点，添加"ROOT"标识
+                if (node.hierarchy_level === 'root') {
+                    ctx.fillStyle = '#FF6A00';
+                    ctx.font = `bold ${fontSize - 2}px Sans-Serif`;
+                    ctx.fillText('ROOT', validX, validY - nodeR - 6);
+                }
+            } catch (error) {
+                console.warn('绘制标签失败:', error);
             }
-
-            // 如果是内容节点，添加图标
-            if (node.type === 'CONTENT') {
-                displayLabel = '📄';
-            }
-
-            // 绘制带背景的文本
-            const textWidth = ctx.measureText(displayLabel).width;
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-            ctx.fillRect(node.x - textWidth / 2 - 2, node.y + nodeR + 2, textWidth + 4, fontSize + 4);
-
-            ctx.fillStyle = '#333';
-            ctx.fillText(displayLabel, node.x, node.y + nodeR + fontSize / 2 + 4);
         }
     };
 
-    // 辅助函数：绘制三角形
-    const drawTriangle = (ctx, x, y, r) => {
-        ctx.moveTo(x, y - r);
-        ctx.lineTo(x - r, y + r);
-        ctx.lineTo(x + r, y + r);
+    // 辅助函数：绘制菱形
+    const drawDiamond = (ctx, x, y, r) => {
+        ctx.beginPath();
+        ctx.moveTo(x, y - r); // 上点
+        ctx.lineTo(x + r, y); // 右点
+        ctx.lineTo(x, y + r); // 下点
+        ctx.lineTo(x - r, y); // 左点
         ctx.closePath();
     };
 
@@ -454,6 +610,7 @@ const GraphVisualizerPage = () => {
         const height = r * 2;
         const foldSize = r * 0.3;
 
+        ctx.beginPath();
         ctx.moveTo(x - width / 2, y - height / 2);
         ctx.lineTo(x + width / 2 - foldSize, y - height / 2);
         ctx.lineTo(x + width / 2, y - height / 2 + foldSize);
@@ -682,9 +839,9 @@ const GraphVisualizerPage = () => {
                             linkWidth={link => {
                                 // 增强父子链接的显示
                                 if (link.type === 'PARENT_OF') {
-                                    return link.width || 1.5;
+                                    return link.width || 2;
                                 }
-                                return link.width || 0.8;
+                                return link.width || 1;
                             }}
                             linkColor={link => {
                                 try {
@@ -695,10 +852,15 @@ const GraphVisualizerPage = () => {
                                     )) {
                                         return '#ff6600'; // 高亮选中节点的连接
                                     }
+
+                                    // 根据连接类型设置不同颜色
+                                    if (link.type === 'PARENT_OF') {
+                                        return 'rgba(24, 144, 255, 0.7)'; // 父子关系使用蓝色
+                                    }
                                 } catch (error) {
                                     console.warn('链接处理错误:', error);
                                 }
-                                return link.color || '#999';
+                                return link.color || 'rgba(150, 150, 150, 0.5)';
                             }}
                             nodeCanvasObjectMode={() => 'replace'}
                             onNodeClick={handleNodeClick}
@@ -708,27 +870,62 @@ const GraphVisualizerPage = () => {
                             linkDirectionalArrowLength={link => link.type === 'PARENT_OF' ? 5 : (link.arrow ? 4 : 0)}
                             linkDirectionalArrowRelPos={0.9}
                             linkCurvature={link => link.type === 'PARENT_OF' ? 0 : 0.2} // 父子链接为直线
+                            linkDirectionalParticles={link => link.type === 'PARENT_OF' ? 2 : 0} // 为父子关系添加粒子效果
+                            linkDirectionalParticleWidth={2} // 粒子大小
+                            linkDirectionalParticleSpeed={0.005} // 粒子速度
+                            linkDirectionalParticleColor={() => '#1890ff'} // 粒子颜色
                             d3Force={(name, force) => {
                                 // 添加自定义力
                                 if (name === 'charge') {
-                                    // 强化排斥力
-                                    force.strength(chargeStrength).distanceMax(300);
+                                    // 调整排斥力 - 标签层级关系和文档标签关系分别配置
+                                    const forceValue = viewMode === 'tag_hierarchy' ? -200 : -100;
+                                    force.strength(forceValue).distanceMax(200);
+                                }
+
+                                if (name === 'link') {
+                                    // 调整链接强度和距离
+                                    if (viewMode === 'tag_hierarchy') {
+                                        // 标签层级视图使用较大的距离，但较低的强度
+                                        force.distance(80).strength(0.3);
+                                    } else {
+                                        // 文档标签视图使用较小的距离，但较高的强度
+                                        force.distance(40).strength(0.8);
+                                    }
+                                }
+
+                                // 为根节点添加额外的中心力
+                                if (viewMode === 'tag_hierarchy' && graphData.nodes) {
+                                    // 找到所有根节点
+                                    const rootNodes = graphData.nodes.filter(n => n.hierarchy_level === 'root');
+                                    if (rootNodes.length > 0) {
+                                        // 如果有根节点，添加中心力
+                                        if (name === 'center' && force) {
+                                            force.strength(node => node.hierarchy_level === 'root' ? 1 : 0.1);
+                                        }
+                                    }
                                 }
                             }}
                             linkStrength={link => {
                                 // 父子关系的链接强度较低，允许更多的弹性
                                 if (link.type === 'PARENT_OF') {
-                                    return 0.3;
+                                    return viewMode === 'tag_hierarchy' ? 0.4 : 0.7;
                                 }
                                 // 其他类型的链接强度较高，确保紧密连接
-                                return link.value || 0.9;
+                                return link.value || 0.8;
                             }}
-                            d3ForceDistance={linkDistance}
+                            d3ForceDistance={viewMode === 'tag_hierarchy' ? 80 : 40}
                             warmupTicks={100}
                             onEngineStop={() => {
                                 // 在图表停止移动后居中到标签
                                 setTimeout(centerOnTags, 300);
+                                // 适应视图
+                                if (graphRef.current) {
+                                    graphRef.current.zoomToFit(400, 40);
+                                }
                             }}
+                            dagMode={viewMode === 'tag_hierarchy' ? 'radialout' : null} // 放射状布局仅用于标签层级
+                            dagLevelDistance={50} // 调整层级间距
+                            dagNodeFilter={node => node.type === 'TAG'} // 只有TAG类型节点参与DAG布局
                         />
                     ) : (
                         <Empty description="暂无图数据或该知识库尚未构建知识图谱" />

@@ -42,11 +42,25 @@ class ReferencedExcerptInfo(BaseModel):
     # token_count: Optional[int] = None # 从块元数据获取 (如果需要)
     # chunk_index: Optional[int] = None # 从块元数据获取 (如果需要构建 chunk_id)
 
+# 添加代码片段信息类
+class CodeSnippetInfo(BaseModel):
+    component_id: Optional[int] = None
+    file_path: Optional[str] = None
+    name: Optional[str] = None
+    type: Optional[str] = None
+    code: str
+    signature: Optional[str] = None
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    score: Optional[float] = None
+    repository_id: Optional[int] = None
+
 class TagRAGChatResponse(BaseModel):
     answer: str
     thinking_process: List[Dict[str, Any]]
     referenced_tags: List[ReferencedTagInfo]
     referenced_excerpts: List[ReferencedExcerptInfo]
+    code_snippets: List[CodeSnippetInfo] = [] # 添加代码片段字段
     user_query: str # 回传用户原始查询
     knowledge_base_id: Optional[int] = None # 回传知识库ID
 # --- End Pydantic Models ---
@@ -81,6 +95,9 @@ class AgentManager:
         except Exception as e:
              logger.error(f"Failed to initialize default embedding model {T_CUS_EMBEDDING_MODEL}: {e}")
              self.embedding_instance = None # Handle potential init failure
+        
+        self.retrieved_results = []  # 存储检索到的结果
+        self.retrieval_agent_response = None  # 存储retrieval_agent的原始响应
     
     def log_thinking_process(self, step_info: str, agent_name: str, level: str = "INFO", status: Optional[str] = None, **kwargs):
         """Helper method to log steps in the thinking process."""
@@ -219,24 +236,25 @@ class AgentManager:
         else:
             self.log_thinking_process("DB session not available, cannot fetch system tags for T(q) prompt.", "QueryTagGeneratorAgent", level="WARNING")
 
-        prompt = f'''
-用户查询: \"{user_query}\"
+        prompt_template_tq = ("""用户查询: \"{user_query}\"
 
-基于以下【可用标签列表】，请仔细分析用户查询，并选择或生成与用户查询最相关的1-3个关键词或短语作为标签。
+基于以下【可用系统标签参考列表】，请仔细分析用户查询的核心意图和潜在上下文。你的目标是生成一系列最相关的标签，这些标签应具备以下特点：
+1.  **全面性与大局观**: 从不同维度和层级思考，确保标签能捕捉用户查询的多个方面，并反映其核心概念及可能的上下文关联。如果查询涉及多个主题，请为各主要方面提供标签。
+2.  **高质量与精准性**: 每个标签都应具有高信息量，力求精准。
+3.  **优先与创新并存**:
+    *   如果【可用系统标签参考列表】中有与查询意图高度匹配的标签，请优先使用它们。
+    *   即使存在部分相似的已有标签，如果你认为有更精确、更全面或更能体现大局观的新标签能够描述查询意图，请大胆生成新标签。我们鼓励生成能提升后续检索效果和知识关联性的新标签。
+4.  **数量适宜**: 生成的标签数量不必过多，但要确保关键概念得到覆盖。通常建议3-7个标签。
+5.  **相关性**: 所有标签必须与用户查询内容紧密相关。
 
-【重要规则】：
-1. 你必须返回至少一个标签，返回空列表是不允许的。
-2. 如果【可用标签列表】中有直接匹配或高度相关的标签，请优先选择它们。
-3. 对于一般性查询（如项目介绍、系统概述等），若【可用标签列表】中没有匹配项，请生成最相关的新标签。
-4. 返回的标签必须与用户查询内容紧密相关，不要随机选择不相关的标签。
+请以JSON字符串列表的格式返回结果。例如：[\"选择的标签A\", \"新生成的标签B\", \"另一个层面的标签C\"]。
 
-请以JSON字符串列表的格式返回结果。例如：[\"选择的标签1\", \"新生成的标签2\"]。
-
-【可用标签列表】:
+【可用系统标签参考列表】:
 {system_tags_str}
 
-请仅返回有效的JSON字符串列表，并确保列表中包含至少一个与查询紧密相关的标签。
-'''
+请仅返回有效的JSON字符串列表。
+""")
+        prompt = prompt_template_tq.format(user_query=user_query, system_tags_str=system_tags_str)
         
         if not self.llm_client:
             self.log_thinking_process("LLMClient not initialized.", "QueryTagGeneratorAgent", level="ERROR")
@@ -316,8 +334,11 @@ class AgentManager:
         user_query: str,
         vector_store_for_query: VectorStore,
         knowledge_base_id: Optional[int] = None,
-        prompt_configs: Optional[Dict[str, str]] = None
+        prompt_configs: Optional[Dict[str, str]] = None,
+        use_code_retrieval: bool = False, # 新增参数控制是否启用代码检索
+        repository_id: Optional[int] = None # 新增参数指定代码库
     ) -> TagRAGChatResponse:
+        """生成对用户问题的回答并使用TagRAG框架"""
         self.clear_thinking_process()
         self.log_thinking_process("TagRAG流程开始", "SystemCoordinator", user_query=user_query, kb_id=knowledge_base_id)
 
@@ -325,6 +346,7 @@ class AgentManager:
         final_referenced_excerpts_info: List[ReferencedExcerptInfo] = []
         final_answer = "抱歉，我无法处理您的请求。"
         generated_tags_tq_list_of_dicts: List[Dict[str, Any]] = []
+        code_snippets: List[CodeSnippetInfo] = [] # 添加代码片段收集
 
         tag_graph_accessor = None
         original_self_db = self.db
@@ -532,11 +554,86 @@ class AgentManager:
             except Exception as e_context:
                 self.log_thinking_process(f"组装上下文时出错: {e_context}", "ContextAssemblerAgent", level="ERROR")
 
+            # 如果启用了代码检索，添加代码检索功能
+            if use_code_retrieval and repository_id and self.db:
+                self.log_thinking_process("开始检索相关代码", "CodeRetrievalAgent")
+                try:
+                    # 创建代码检索服务
+                    from code_retrieval_service import CodeRetrievalService
+                    code_service = CodeRetrievalService(self.db)
+                    
+                    # 提取代码关键词
+                    code_keywords = await code_service.extract_code_keywords(user_query)
+                    if code_keywords:
+                        self.log_thinking_process(f"提取到的代码关键词: {', '.join(code_keywords)}", "CodeRetrievalAgent")
+                        
+                        # 构建代码专用查询
+                        code_query = " ".join(code_keywords)
+                        
+                        # 检索代码片段
+                        code_results = await code_service.retrieve_code_by_query(
+                            query=code_query,
+                            repository_id=repository_id,
+                            top_k=3  # 限制返回的代码片段数量
+                        )
+                        
+                        # 将检索到的代码添加到上下文
+                        if code_results:
+                            code_context = "\n\n以下是与查询可能相关的代码片段:\n\n"
+                            for i, snippet in enumerate(code_results):
+                                code_context += f"代码片段 {i+1} - {snippet.get('name', '未命名')} ({snippet.get('file_path', '未知文件')}):\n```\n{snippet.get('code', '// 代码不可用')}\n```\n\n"
+                                
+                                # 将代码片段添加到结果列表
+                                code_snippets.append(CodeSnippetInfo(
+                                    component_id=snippet.get("id"),
+                                    file_path=snippet.get("file_path"),
+                                    name=snippet.get("name"),
+                                    type=snippet.get("type"),
+                                    code=snippet.get("code"),
+                                    signature=snippet.get("signature"),
+                                    start_line=snippet.get("start_line"),
+                                    end_line=snippet.get("end_line"),
+                                    score=snippet.get("similarity_score"),
+                                    repository_id=repository_id
+                                ))
+                            
+                            # 添加代码上下文到选定的上下文
+                            selected_context_for_llm += "\n\n" + code_context
+                            self.log_thinking_process(f"检索到 {len(code_results)} 个相关代码片段", "CodeRetrievalAgent")
+                    else:
+                        self.log_thinking_process("未能从查询中提取到代码关键词", "CodeRetrievalAgent")
+                except Exception as e:
+                    self.log_thinking_process(f"代码检索失败: {str(e)}", "CodeRetrievalAgent", level="ERROR")
+
             self.log_thinking_process("开始生成最终答案。", "TagRAG_AnswerAgent")
-            final_answer_agent_prompt = (
-                f"User Query: {user_query}\\\\n\\\\n"
-                f"Relevant Context:\\\\n{selected_context_for_llm if selected_context_for_llm and selected_context_for_llm.strip() else 'No relevant context found after filtering and scoring.'}\\\\n\\\\n"
-                f"Please answer the user query based on the provided context. If the context is insufficient or irrelevant, state that you cannot answer based on the provided information."
+            
+            final_answer_agent_prompt_template = ("""你是一个专业的AI助手，负责根据提供的上下文信息和用户查询，生成一份全面、深入且易于理解的回答。
+
+用户的查询是: \"{user_query}\"
+
+以下是经过筛选和排序的相关上下文信息，每个信息片段都尽可能标记了其来源（例如，文档ID，块索引，或文件名）：
+--- BEGIN CONTEXT ---
+{selected_context_for_llm}
+--- END CONTEXT ---
+
+请遵循以下指引来构建你的回答：
+1.  **核心任务**: 清晰、准确、完整地回答用户查询。
+2.  **深入分析与综合**: 不要简单罗列信息。你需要理解、分析并综合上下文中的信息，形成连贯且有逻辑的答案。如果信息来自多个片段，请努力将它们融合成一个整体性的观点或描述。
+3.  **明确引用来源**: 当你的回答直接或间接依赖于上下文中的特定信息时，必须在相应句子或段落的末尾明确标注引用来源。使用方括号，例如：\"系统支持用户权限管理 [来源: 文档A_chunk2]\" 或 \"根据文档B第3页所述 [来源: 文档B_page3]\"。如果上下文中提供了具体的文档名、ID或块信息，请尽量使用它们。
+4.  **展示推理过程**: 对于非直接陈述性的结论，或者当答案是基于多个信息点综合推断得出时，请简要阐述你的推理逻辑。例如：\"由于上下文片段1指出X，并且片段2显示Y与X相关，因此我们可以推断Z [来源: 片段1, 片段2]\"。
+5.  **全局性与结构化**: 从全局视角组织你的回答，确保逻辑清晰，结构合理。可以使用小标题、列表等形式使回答更易读。
+6.  **专业语气与客观性**: 使用专业、客观的语言。避免主观臆断或没有依据的推测。
+7.  **处理信息不足**: 如果提供的上下文信息不足以完全或准确地回答用户查询的某个方面，请明确指出信息缺失，并可以建议用户提供更具体的问题或说明当前答案的局限性。例如："关于XX的具体实现细节，当前上下文未提供足够信息 [信息来源局限]。"
+8.  **灵活性与相关性**: 根据上下文信息与用户查询的相关度，调整回答的详细程度。对于高度相关的信息，应详细阐述；对于相关度较低但仍有参考价值的信息，可简要提及。
+9.  **避免生硬的直接答案**: 你的回答应该是一段经过思考和组织的论述，而不仅仅是一个词或一个短句的答案。
+10. **如果有代码片段**: 如果上下文中包含代码片段，仔细分析代码并在回答中引用关键部分，解释其功能和作用。
+
+请现在开始生成你的专业回答。
+""")
+            final_answer_agent_prompt = final_answer_agent_prompt_template.format(
+                user_query=user_query,
+                selected_context_for_llm=(selected_context_for_llm if selected_context_for_llm and selected_context_for_llm.strip() 
+                                        else "当前未找到与查询直接相关的上下文信息。请基于您的通用知识回答，并明确指出这是通用知识。")
             )
 
             if self.final_answer_agent and self.user_proxy and self.llm_client: 
@@ -562,7 +659,8 @@ class AgentManager:
             answer=final_answer,
             thinking_process=self.get_thinking_process(),
             referenced_tags=final_referenced_tags_info, 
-            referenced_excerpts=final_referenced_excerpts_info, 
+            referenced_excerpts=final_referenced_excerpts_info,
+            code_snippets=code_snippets, # 添加代码片段到响应
             user_query=user_query,
             knowledge_base_id=knowledge_base_id
         )
@@ -575,12 +673,13 @@ class AgentManager:
         vector_store: Optional[VectorStore] = None,
         repository_id: Optional[int] = None,
         knowledge_base_id: Optional[int] = None,
-        prompt_configs: Optional[Dict[str, str]] = None
+        prompt_configs: Optional[Dict[str, str]] = None,
+        use_code_retrieval: bool = False  # 新增参数，控制是否启用代码检索
     ) -> str:
         """生成对用户问题的回答 (保留的原有逻辑)
         """
         self.clear_thinking_process()
-        self.thinking_process.append({"operation": "generate_answer_original", "user_query": user_query, "use_code_analysis": use_code_analysis, "kb_id": knowledge_base_id, "repo_id": repository_id })
+        self.thinking_process.append({"operation": "generate_answer_original", "user_query": user_query, "use_code_analysis": use_code_analysis, "kb_id": knowledge_base_id, "repo_id": repository_id, "use_code_retrieval": use_code_retrieval })
 
         try:
             current_vector_store = vector_store or self.vector_store
@@ -588,6 +687,7 @@ class AgentManager:
             self.thinking_process.append({"task": "OriginalRetrieval", "retrieved_count": len(retrieval_results)})
             
             retrieval_context = ""
+            formatted_results = []
             for i, result in enumerate(retrieval_results):
                 retrieval_context += f"文档 {i+1}:\n"
                 # 添加键存在性检查，避免KeyError
@@ -603,11 +703,74 @@ class AgentManager:
                 if metadata.get('knowledge_base_id'):
                     retrieval_context += f"知识库ID: {metadata['knowledge_base_id']}\n"
                 retrieval_context += "\n"
+                
+                # 构建格式化的检索结果，存储以供前端使用
+                formatted_results.append({
+                    'chunk_id': f'result-{i}',
+                    'document_source': metadata.get('source', '未知'),
+                    'content': content,
+                    'score': result.get('score', None)
+                })
+            
+            # 存储检索结果
+            self.retrieved_results = formatted_results
             
             code_analysis_context = ""
+            code_snippets = []
             if use_code_analysis and code_analyzer and repository_id is not None:
                 code_analysis_context = "[Code analysis context from original flow]\n"
                 self.thinking_process.append({"task": "OriginalCodeAnalysis", "status": "Generated"})
+            
+            # 添加代码检索功能
+            if use_code_retrieval and repository_id is not None and self.db:
+                self.log_thinking_process("开始检索相关代码", "CodeRetrievalAgent")
+                try:
+                    # 创建代码检索服务
+                    from code_retrieval_service import CodeRetrievalService
+                    code_service = CodeRetrievalService(self.db)
+                    
+                    # 提取代码关键词
+                    code_keywords = await code_service.extract_code_keywords(user_query)
+                    if code_keywords:
+                        self.log_thinking_process(f"提取到的代码关键词: {', '.join(code_keywords)}", "CodeRetrievalAgent")
+                        
+                        # 构建代码专用查询
+                        code_query = " ".join(code_keywords)
+                        
+                        # 检索代码片段
+                        code_results = await code_service.retrieve_code_by_query(
+                            query=code_query,
+                            repository_id=repository_id,
+                            top_k=3  # 限制返回的代码片段数量
+                        )
+                        
+                        # 将检索到的代码添加到上下文
+                        if code_results:
+                            code_analysis_context += "\n代码检索结果:\n"
+                            for i, snippet in enumerate(code_results):
+                                code_analysis_context += f"代码片段 {i+1} - {snippet.get('name', '未命名')} ({snippet.get('file_path', '未知文件')}):\n"
+                                code_analysis_context += f"```\n{snippet.get('code', '// 代码不可用')}\n```\n\n"
+                                
+                                # 添加到代码片段列表，用于前端显示
+                                code_snippets.append(CodeSnippetInfo(
+                                    component_id=snippet.get("id"),
+                                    file_path=snippet.get("file_path"),
+                                    name=snippet.get("name"),
+                                    type=snippet.get("type"),
+                                    code=snippet.get("code"),
+                                    signature=snippet.get("signature"),
+                                    start_line=snippet.get("start_line"),
+                                    end_line=snippet.get("end_line"),
+                                    score=snippet.get("similarity_score"),
+                                    repository_id=repository_id
+                                ))
+                            
+                            self.log_thinking_process(f"检索到 {len(code_results)} 个相关代码片段", "CodeRetrievalAgent")
+                    else:
+                        self.log_thinking_process("未能从查询中提取到代码关键词", "CodeRetrievalAgent")
+                        
+                except Exception as e:
+                    self.log_thinking_process(f"代码检索失败: {str(e)}", "CodeRetrievalAgent", level="ERROR")
 
             initial_message = f"User Query: {user_query}\n\nRetrieved Context:\n{retrieval_context}"
             if code_analysis_context:
@@ -616,7 +779,7 @@ class AgentManager:
             if prompt_configs:
                  self._init_agents(use_code_analysis, prompt_configs)
 
-            if use_code_analysis:
+            if use_code_analysis or use_code_retrieval:  # 修改逻辑，当启用代码检索时也使用完整的代理组
                 groupchat = autogen.GroupChat(
                     agents=[self.user_proxy, self.retrieval_agent, self.analyst_agent, self.code_analyst_agent, self.final_answer_agent],
                     messages=[],
@@ -642,9 +805,34 @@ class AgentManager:
                     max_turns=1
                 )
 
-            answer = self.user_proxy.last_message(self.final_answer_agent if use_code_analysis else self.final_answer_agent).get("content", "Sorry, I could not generate an answer (original flow).")
+            answer = self.user_proxy.last_message(self.final_answer_agent if use_code_analysis or use_code_retrieval else self.final_answer_agent).get("content", "Sorry, I could not generate an answer (original flow).")
             self.thinking_process.append({"task": "OriginalAnswerGeneration", "final_answer_length": len(answer)})
-            return answer
+            
+            # 如果启用了代码检索，返回代码片段信息
+            if use_code_retrieval and code_snippets:
+                self.thinking_process.append({"task": "CodeRetrieval", "snippets_count": len(code_snippets)})
+                # 仅返回答案和思考过程，让main.py处理代码片段
+                return answer
+            else:
+                # 构建retrieval_agent_response
+                from datetime import datetime
+                self.retrieval_agent_response = f"""
+retrieval_agent (to 用户代理):
+
+### 用户问题分析
+用户询问"{user_query[:50]}..."，我们需要提供相关的信息。
+
+### 检索结果评估
+检索到了{len(retrieval_results)}个相关结果，其中包含了以下关键信息：
+{retrieval_context}
+
+### 整理检索到的信息
+{answer}
+
+--------------------------------------------------------------------------------
+{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+                return answer
 
         except Exception as e:
             logger.error(f"Error in original generate_answer: {str(e)}")

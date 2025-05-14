@@ -31,7 +31,7 @@ def get_autogen_config() -> Dict[str, Any]:
     if USE_OPENAI and OPENAI_API_KEY:
         # 使用OpenAI
         openai_config = {
-            "model": os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
+            "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
             "api_key": OPENAI_API_KEY,
         }
         # 添加API基础URL，如果指定了的话

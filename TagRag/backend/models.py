@@ -10,7 +10,7 @@ from sqlalchemy import event # For custom event listeners if needed later
 os.makedirs("data/db", exist_ok=True)
 
 # 数据库URL
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///data/db/code_analysis.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///data/db/tagrag.db")
 
 # 创建引擎
 engine = create_engine(DATABASE_URL)
@@ -58,6 +58,10 @@ class CodeRepository(Base):
     
     # 分析状态: pending, in_progress, completed, failed
     status = Column(String, default="pending")
+    
+    # 向量化状态
+    vectorized = Column(Boolean, default=False)
+    last_vectorized = Column(DateTime, nullable=True)
     
     # 添加知识库外键
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True)

@@ -21,8 +21,10 @@ from config import VECTOR_DB_DIR
 # 导入原有功能模块
 from vector_store import VectorStore
 from document_processor import DocumentProcessor
-from agent_manager import AgentManager, TagRAGChatResponse
+from agent_manager import AgentManager, TagRAGChatResponse, CodeSnippetInfo
 from models import create_tables, get_db, CodeRepository, KnowledgeBase, Document as DBDocument, DocumentChunk, Tag as DBTag, document_tags, TagDependency
+from enhanced_code_analyzer import EnhancedCodeAnalyzer, CodeComponent, CodeFile
+from code_retrieval_service import CodeRetrievalService
 
 # 导入新增的代码分析模块
 from code_analysis_routes import router as code_analysis_router
@@ -91,6 +93,8 @@ class QuestionRequest(BaseModel):
     knowledge_base_id: Optional[int] = None
     use_code_analysis: bool = False # Relevant for original flow
     use_tag_rag: bool = False # New flag to select TagRAG flow
+    use_code_retrieval: bool = False # 新增参数控制是否启用代码检索
+    repository_id: Optional[int] = None # 新增仓库ID参数用于代码检索
     prompt_configs: Optional[Dict[str, str]] = None
 
 # TagRAG 请求模型 (与 QuestionRequest 相同，但默认 use_tag_rag=True)
@@ -98,6 +102,8 @@ class TagRAGRequest(BaseModel):
     query: str
     knowledge_base_id: Optional[int] = None
     use_code_analysis: bool = False
+    use_code_retrieval: bool = False # 新增参数控制是否启用代码检索
+    repository_id: Optional[int] = None # 新增仓库ID参数用于代码检索
     prompt_configs: Optional[Dict[str, str]] = None
 
 # 文档上传请求模型
@@ -223,6 +229,7 @@ async def tag_rag_chat(request: TagRAGRequest, db: Session = Depends(get_db)):
     """专用于TagRAG流程的问答接口，直接将请求转发到主要的ask接口并强制启用TagRAG"""
     try:
         logger.info(f"[/chat/tag-rag] Received query: '{request.query[:50]}...' for KB ID: {request.knowledge_base_id}")
+        logger.info(f"[/chat/tag-rag] Use code retrieval: {request.use_code_retrieval}, Repository ID: {request.repository_id}")
         
         # 创建一个等价的 QuestionRequest 对象，但强制 use_tag_rag=True
         question_req = QuestionRequest(
@@ -230,6 +237,8 @@ async def tag_rag_chat(request: TagRAGRequest, db: Session = Depends(get_db)):
             knowledge_base_id=request.knowledge_base_id,
             use_code_analysis=request.use_code_analysis,
             use_tag_rag=True,  # 强制启用 TagRAG
+            use_code_retrieval=request.use_code_retrieval, # 传递代码检索参数
+            repository_id=request.repository_id, # 传递仓库ID参数
             prompt_configs=request.prompt_configs
         )
         
@@ -248,108 +257,82 @@ async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
     try:
         logger.info(f"Received query: '{request.query[:50]}...' for KB ID: {request.knowledge_base_id}")
         logger.info(f"Using TagRAG: {request.use_tag_rag}, Use Code Analysis: {request.use_code_analysis}")
+        logger.info(f"Use Code Retrieval: {request.use_code_retrieval}, Repository ID: {request.repository_id}")
         
-        knowledge_base_id = request.knowledge_base_id
-        repository_id = None
+        # 获取合适的向量存储
+        vector_store = get_vector_store(None, request.knowledge_base_id)
         
-        # 确保知识库ID有效
-        if knowledge_base_id:
-            kb_entry = db.query(KnowledgeBase).options(joinedload(KnowledgeBase.repositories)).filter(KnowledgeBase.id == knowledge_base_id).first()
-            if not kb_entry:
-                logger.error(f"知识库ID {knowledge_base_id} 不存在")
-                raise HTTPException(status_code=404, detail=f"知识库ID {knowledge_base_id} 不存在")
-                
-            if kb_entry.repositories:
-                repository_id = kb_entry.repositories[0].id 
-                logger.info(f"Found repository_id {repository_id} for KB {knowledge_base_id}")
-            else:
-                logger.warning(f"No specific repository found for KB ID {knowledge_base_id}. Will use KB ID directly without repository.")
-        
-        # 使用修改后的 get_vector_store 函数，同时传递 repository_id 和 knowledge_base_id
-        vector_store_for_query = get_vector_store(repository_id=repository_id, knowledge_base_id=knowledge_base_id)
-        
-        if not vector_store_for_query:
-             logger.error(f"Could not get VectorStore for effective ID: {repository_id} (derived from KB ID: {knowledge_base_id})")
-             raise HTTPException(status_code=500, detail="Failed to initialize vector store for the query.")
-
-        # 为每个请求创建一个新的 AgentManager 实例，确保使用正确的 VectorStore 和 DB session
-        current_agent_manager = AgentManager(vector_store=vector_store_for_query, db_session_factory=get_db, db=db)
-        
+        # 创建Agent管理器
         if request.use_tag_rag:
-            if not knowledge_base_id: # TagRAG 必须有知识库ID
-                logger.error("TagRAG flow initiated without a knowledge_base_id.")
-                raise HTTPException(status_code=400, detail="Knowledge Base ID is required for TagRAG flow.")
-
-            logger.info(f"Using TagRAG flow in /ask endpoint for KB {knowledge_base_id}...")
-            try:
-                tag_rag_response: TagRAGChatResponse = await current_agent_manager.generate_answer_tag_rag(
-                    user_query=request.query,
-                    vector_store_for_query=vector_store_for_query,
-                    knowledge_base_id=knowledge_base_id,
-                    prompt_configs=request.prompt_configs
-                )
-                return tag_rag_response 
-            except HTTPException as http_exc:
-                raise http_exc
-            except Exception as tag_rag_err:
-                 logger.error(f"Error during TagRAG processing in /ask: {tag_rag_err}", exc_info=True)
-                 # 在抛出前记录更详细的上下文
-                 thinking_process_on_error = current_agent_manager.get_thinking_process()
-                 error_detail_with_context = {
-                     "error_message": f"Error in TagRAG processing: {str(tag_rag_err)}",
-                     "query": request.query,
-                     "kb_id": knowledge_base_id,
-                     "thinking_process_trace": thinking_process_on_error[-5:] # Log last 5 steps
-                 }
-                 logger.error(f"TagRAG Error Context: {json.dumps(error_detail_with_context, indent=2, ensure_ascii=False)}")
-                 raise HTTPException(status_code=500, detail=f"Error in TagRAG processing: {str(tag_rag_err)}")
+            # TagRAG模式
+            result = await agent_manager.generate_answer_tag_rag(
+                request.query, 
+                vector_store, 
+                request.knowledge_base_id,
+                request.prompt_configs,
+                request.use_code_retrieval, # 传递代码检索开关
+                request.repository_id # 传递仓库ID
+            )
+            return result
         else:
-            # --- Original Flow --- 
-            logger.info(f"Using Original flow in /ask endpoint for KB {knowledge_base_id}...")
+            # 原始非TagRAG模式
             code_analyzer = None
             if request.use_code_analysis:
-                if repository_id is None and knowledge_base_id: # 如果只有 kb_id, 尝试用它作为 repo_id
-                     logger.info(f"Original flow with code analysis: No specific repository_id, using knowledge_base_id {knowledge_base_id} as potential repo_id.")
-                     actual_repo_id_for_code_analysis = knowledge_base_id
-                elif repository_id:
-                     actual_repo_id_for_code_analysis = repository_id
-                else: # Code analysis needs a repository context
-                    logger.warning("Code analysis requested but no repository_id or knowledge_base_id provided that maps to a repository.")
-                    actual_repo_id_for_code_analysis = None # Code analysis will likely be skipped or fail
+                code_analyzer = EnhancedCodeAnalyzer(db)
 
-                if actual_repo_id_for_code_analysis:
-                    logger.info(f"Initializing CodeAnalysisService for repository {actual_repo_id_for_code_analysis} (Original Flow)")
-                    try:
-                        from analysis_service import CodeAnalysisService
-                        code_analyzer = CodeAnalysisService(db)
-                    except ImportError:
-                         logger.error("CodeAnalysisService not found or import failed.")
-                         raise HTTPException(status_code=501, detail="Code analysis feature is configured but service is unavailable.")
-                    except Exception as code_init_err:
-                        logger.error(f"Failed to initialize CodeAnalysisService: {code_init_err}", exc_info=True)
-                        raise HTTPException(status_code=500, detail=f"Failed to initialize code analysis: {code_init_err}")
+            # 初始化重置agent_manager的DB会话
+            agent_manager.db = db
             
-            try:
-                answer_str = await current_agent_manager.generate_answer_original(
-                    user_query=request.query, 
-                    use_code_analysis=request.use_code_analysis,
-                    code_analyzer=code_analyzer,
-                    vector_store=vector_store_for_query, 
-                    repository_id=repository_id, 
-                    knowledge_base_id=knowledge_base_id,
-                    prompt_configs=request.prompt_configs
-                )
-                thinking_process_original = current_agent_manager.get_thinking_process()
-                return {"answer": answer_str, "thinking_process": thinking_process_original}
-            except Exception as original_flow_err:
-                logger.error(f"Error during Original flow processing in /ask: {original_flow_err}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error in Original flow processing: {str(original_flow_err)}")
-
-    except HTTPException as http_exc:
-        raise http_exc 
+            # 获取回答
+            answer = await agent_manager.generate_answer_original(
+                request.query,
+                request.use_code_analysis,
+                code_analyzer,
+                vector_store,
+                request.repository_id,
+                request.knowledge_base_id,
+                request.prompt_configs,
+                request.use_code_retrieval  # 传递代码检索开关
+            )
+            
+            # 在原始模式下，如果启用了代码检索，返回代码片段
+            code_snippets = []
+            if request.use_code_retrieval:
+                # 从agent_manager获取code_snippets
+                code_retrieval_service = CodeRetrievalService(db)
+                code_keywords = await code_retrieval_service.extract_code_keywords(request.query)
+                
+                if code_keywords and request.repository_id:
+                    # 获取代码库对应的知识库ID
+                    repo = db.query(CodeRepository).filter(CodeRepository.id == request.repository_id).first()
+                    if repo:
+                        # 记录代码检索的知识库信息
+                        logger.info(f"代码检索使用仓库: {repo.name} (ID: {repo.id})")
+                        code_snippets = await code_retrieval_service.retrieve_code_by_query(
+                            " ".join(code_keywords),
+                            request.repository_id,
+                            top_k=3
+                        )
+            
+            # 构建与TagRAG模式相似的响应
+            thinking_process = agent_manager.thinking_process if hasattr(agent_manager, "thinking_process") else []
+            retrieval_agent_response = agent_manager.retrieval_agent_response if hasattr(agent_manager, "retrieval_agent_response") else None
+            
+            result = {
+                "answer": answer,
+                "thinking_process": thinking_process,
+                "referenced_tags": [],  # 非TagRAG模式无标签
+                "referenced_excerpts": agent_manager.retrieved_results if hasattr(agent_manager, "retrieved_results") else [],
+                "code_snippets": code_snippets,
+                "retrieval_agent_response": retrieval_agent_response  # 添加retrieval_agent_response字段
+            }
+            
+            return result
     except Exception as e:
-        logger.error(f"Unhandled error in /ask endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        logger.error(f"Error processing question: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
 
 @app.get("/code-fields")
 async def get_code_fields(repository_id: Optional[int] = None):

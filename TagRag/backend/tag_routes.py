@@ -5,12 +5,43 @@ import json
 import logging
 import re
 from sqlalchemy import text
+import time
 
 from models import get_db, Tag, Document, DocumentChunk, document_tags, document_chunk_tags, KnowledgeBase, TagDependency
 from config import get_autogen_config
 
 router = APIRouter(prefix="", tags=["tags-management"])
 logger = logging.getLogger(__name__)
+
+# 缓存机制
+_cache = {
+    "deletable_tags": {
+        "data": None,
+        "timestamp": 0,
+        "ttl": 10 # 缓存10秒
+    }
+}
+
+def get_cached_data(cache_key):
+    """获取缓存数据，如果过期则返回None"""
+    cache_entry = _cache.get(cache_key)
+    if not cache_entry:
+        return None
+    
+    if time.time() - cache_entry["timestamp"] > cache_entry["ttl"]:
+        return None  # 缓存过期
+    
+    return cache_entry["data"]
+
+def set_cached_data(cache_key, data, ttl=None):
+    """设置缓存数据"""
+    if cache_key not in _cache:
+        _cache[cache_key] = {"data": None, "timestamp": 0, "ttl": 10}
+    
+    _cache[cache_key]["data"] = data
+    _cache[cache_key]["timestamp"] = time.time()
+    if ttl is not None:
+        _cache[cache_key]["ttl"] = ttl
 
 # LLM客户端 - 简化版本，使用与代码分析相同的模式
 class LLMClient:
@@ -155,7 +186,11 @@ async def create_tag(
     is_system: Optional[bool] = Body(False),  # 新增是否为系统预设标签参数
     db: Session = Depends(get_db)
 ):
-    """创建新标签"""
+    """
+    创建新标签
+    
+    支持创建多个根标签（root），不再限制每种类型只能有一个根标签
+    """
     try:
         # 检查是否已存在同名标签
         existing_tag = db.query(Tag).filter(Tag.name == name).first()
@@ -175,16 +210,6 @@ async def create_tag(
             elif parent_tag.hierarchy_level == "branch":
                 # 如果父标签是分支标签，则当前标签为叶标签
                 hierarchy_level = "leaf"
-        elif hierarchy_level == "root":
-            # 如果没有父标签且标记为根标签，检查是否已存在同类型的根标签
-            existing_root = db.query(Tag).filter(
-                Tag.hierarchy_level == "root",
-                Tag.tag_type == tag_type
-            ).first()
-            if existing_root:
-                logger.warning(f"已存在同类型的根标签: {existing_root.name}。将使用现有根标签作为父标签。")
-                parent_id = existing_root.id
-                hierarchy_level = "branch"
         
         # 创建新标签
         tag = Tag(
@@ -1546,8 +1571,21 @@ async def diagnose_tag(tag_id: int, db: Session = Depends(get_db)):
 
 @router.get("/tags/deletable")
 async def get_all_deletable_tags(db: Session = Depends(get_db)):
-    """获取所有可以安全删除的标签（没有关联文档且不是父标签且不是root标签）"""
+    """
+    获取所有可以安全删除的标签
+    
+    返回没有关联文档且不是父标签的所有标签，包括root标签
+    """
     try:
+        # 尝试从缓存获取数据
+        cached_result = get_cached_data("deletable_tags")
+        if cached_result:
+            logger.info("使用缓存的可删除标签数据")
+            return cached_result
+            
+        # 缓存未命中，执行数据库查询
+        logger.info("缓存未命中，从数据库查询可删除标签")
+        
         # 1. 获取所有标签
         tags = db.query(Tag).all()
         
@@ -1561,11 +1599,8 @@ async def get_all_deletable_tags(db: Session = Depends(get_db)):
             child_count = db.query(Tag).filter(Tag.parent_id == tag.id).count()
             has_children = child_count > 0
             
-            # 4. 检查是否为root标签
-            is_root = tag.hierarchy_level == "root"
-            
-            # 5. 如果没有关联文档且不是父标签且不是root标签，则添加到结果中
-            if not has_documents and not has_children and not is_root:
+            # 5. 如果没有关联文档且不是父标签，则添加到结果中
+            if not has_documents and not has_children:
                 result.append({
                     "id": tag.id,
                     "name": tag.name,
@@ -1574,7 +1609,11 @@ async def get_all_deletable_tags(db: Session = Depends(get_db)):
                     "hierarchy_level": tag.hierarchy_level
                 })
         
-        return {"deletable_tags": result, "count": len(result)}
+        # 计算结果并缓存
+        response = {"deletable_tags": result, "count": len(result)}
+        set_cached_data("deletable_tags", response, ttl=5)  # 缓存5秒
+        
+        return response
     except Exception as e:
         logger.error(f"获取可删除标签列表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取可删除标签列表失败: {str(e)}") 
