@@ -262,17 +262,224 @@ async def list_repositories(db: Session = Depends(get_db)):
 
 @router.get("/repositories/{repo_id}")
 async def get_repository_summary(repo_id: int, db: Session = Depends(get_db)):
-    """获取代码库摘要信息"""
-    service = CodeAnalysisService(db)
-    
+    """获取代码仓库的完整摘要"""
     try:
-        summary = await service.get_repository_summary(repo_id)
-        return summary
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+        if not repo:
+            raise HTTPException(status_code=404, detail=f"找不到ID为{repo_id}的代码库")
+        
+        # 获取所有组件和统计信息
+        components = db.query(CodeComponent).filter(CodeComponent.repository_id == repo_id).all()
+        file_stats = _get_file_stats(repo_id, db)
+        dependencies = db.query(ComponentDependency).filter(ComponentDependency.repository_id == repo_id).count()
+        
+        return {
+            "id": repo.id,
+            "name": repo.name,
+            "path": repo.path,
+            "description": repo.description,
+            "file_stats": file_stats,
+            "important_components": [component.to_dict() for component in components],
+            "statistics": {
+                "total_files": db.query(CodeFile).filter(CodeFile.repository_id == repo_id).count(),
+                "total_components": len(components),
+                "total_dependencies": dependencies
+            }
+        }
     except Exception as e:
         logger.error(f"获取代码库摘要时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取代码库摘要失败: {str(e)}")
+
+@router.get("/repositories/{repo_id}/basic-info")
+async def get_repository_basic_info(repo_id: int, db: Session = Depends(get_db)):
+    """获取代码仓库的基本信息（不包含组件列表，只有统计数据）"""
+    try:
+        # 获取仓库基本信息
+        repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+        if not repo:
+            raise HTTPException(status_code=404, detail=f"找不到ID为{repo_id}的代码库")
+        
+        # 简化的统计信息
+        file_count = db.query(CodeFile).filter(CodeFile.repository_id == repo_id).count()
+        components_count = db.query(CodeComponent).filter(CodeComponent.repository_id == repo_id).count()
+        
+        # 语言分布统计 - 安全获取
+        language_stats = {}
+        try:
+            files = db.query(CodeFile).filter(CodeFile.repository_id == repo_id).all()
+            for file in files:
+                # 使用file_path或path，取决于模型定义
+                file_path = getattr(file, 'file_path', None) or getattr(file, 'path', '')
+                if not file_path:
+                    continue
+                    
+                ext = os.path.splitext(file_path)[-1].lower()
+                if ext.startswith('.'):
+                    ext = ext[1:]  # 移除点号
+                
+                # 简化语言分类
+                if ext in ['py']:
+                    lang = 'python'
+                elif ext in ['js', 'jsx']:
+                    lang = 'javascript'
+                elif ext in ['ts', 'tsx']:
+                    lang = 'typescript'
+                elif ext in ['java']:
+                    lang = 'java'
+                elif ext in ['cpp', 'hpp', 'h', 'c']:
+                    lang = 'c/c++'
+                else:
+                    lang = 'other'
+                    
+                language_stats[lang] = language_stats.get(lang, 0) + 1
+        except Exception as e:
+            logger.warning(f"获取语言统计失败: {str(e)}")
+            # 不中断流程，继续返回其他信息
+        
+        # 尝试获取依赖关系数量
+        dependencies_count = 0
+        try:
+            # 适应不同的数据模型字段
+            if hasattr(ComponentDependency, 'repository_id'):
+                dependencies_count = db.query(ComponentDependency).filter(
+                    ComponentDependency.repository_id == repo_id
+                ).count()
+            else:
+                # 如果没有repository_id字段，尝试通过组件关联
+                dependency_query = db.query(ComponentDependency).join(
+                    CodeComponent, 
+                    ComponentDependency.source_id == CodeComponent.id
+                ).filter(
+                    CodeComponent.repository_id == repo_id
+                )
+                dependencies_count = dependency_query.count()
+        except Exception as e:
+            logger.warning(f"获取依赖关系统计失败: {str(e)}")
+            # 不中断流程，继续返回其他信息
+        
+        return {
+            "id": repo.id,
+            "name": repo.name,
+            "path": repo.path,
+            "description": repo.description or "无描述信息",
+            "file_stats": language_stats,
+            "statistics": {
+                "total_files": file_count,
+                "total_components": components_count,
+                "total_dependencies": dependencies_count
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取代码库基本信息时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取代码库基本信息失败: {str(e)}")
+
+@router.get("/repositories/{repo_id}/components")
+async def get_repository_components(
+    repo_id: int, 
+    page: int = Query(1, ge=1), 
+    page_size: int = Query(50, ge=1, le=1000),
+    component_type: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """分页获取代码仓库的组件列表"""
+    try:
+        repo = db.query(CodeRepository).filter(CodeRepository.id == repo_id).first()
+        if not repo:
+            raise HTTPException(status_code=404, detail=f"找不到ID为{repo_id}的代码库")
+        
+        # 构建查询
+        query = db.query(CodeComponent).filter(CodeComponent.repository_id == repo_id)
+        
+        # 如果指定了组件类型，进行过滤
+        if component_type:
+            query = query.filter(CodeComponent.type == component_type)
+        
+        # 检查模型属性，使用安全的排序字段
+        # 尝试不同的可能属性名称
+        try:
+            if hasattr(CodeComponent, 'importance_score'):
+                query = query.order_by(desc(CodeComponent.importance_score))
+            elif hasattr(CodeComponent, 'importance'):
+                query = query.order_by(desc(CodeComponent.importance))
+            else:
+                # 如果没有重要性相关字段，则按ID排序
+                query = query.order_by(desc(CodeComponent.id))
+        except Exception as e:
+            logger.warning(f"组件排序出错，使用默认排序: {str(e)}")
+            # 默认排序
+            query = query.order_by(desc(CodeComponent.id))
+        
+        # 执行分页
+        offset = (page - 1) * page_size
+        components = query.offset(offset).limit(page_size).all()
+        
+        # 转换为字典列表，确保返回字段是安全的
+        result = []
+        for component in components:
+            try:
+                # 使用原有to_dict方法，添加异常处理
+                result.append(component.to_dict())
+            except AttributeError:
+                # 如果没有to_dict方法，手动创建简化字典
+                comp_dict = {
+                    "id": component.id,
+                    "name": component.name,
+                    "type": component.type,
+                    "file_path": getattr(component, 'file_path', None) or f"文件ID: {component.file_id}"
+                }
+                
+                # 添加其他可能存在的字段
+                if hasattr(component, 'importance_score'):
+                    comp_dict["importance"] = component.importance_score
+                elif hasattr(component, 'importance'):
+                    comp_dict["importance"] = component.importance
+                else:
+                    comp_dict["importance"] = 0.5  # 默认中等重要性
+                    
+                result.append(comp_dict)
+                
+        return result
+    except Exception as e:
+        logger.error(f"分页获取代码库组件时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取代码库组件失败: {str(e)}")
+
+def _get_file_stats(repo_id: int, db: Session) -> Dict[str, int]:
+    """获取代码库的文件类型统计"""
+    try:
+        # 按扩展名统计文件数量
+        files = db.query(CodeFile).filter(CodeFile.repository_id == repo_id).all()
+        stats = {}
+        
+        for file in files:
+            ext = os.path.splitext(file.path)[-1].lower()
+            if ext.startswith('.'):
+                ext = ext[1:]  # 移除点号
+            
+            # 扩展名映射到语言
+            language = ext
+            if ext == 'py':
+                language = 'python'
+            elif ext in ['js', 'jsx']:
+                language = 'javascript'
+            elif ext in ['ts', 'tsx']:
+                language = 'typescript'
+            elif ext in ['java']:
+                language = 'java'
+            elif ext in ['cpp', 'hpp', 'cc', 'cxx']:
+                language = 'cpp'
+            elif ext in ['c', 'h']:
+                language = 'c'
+            
+            # 统计语言数量
+            if language in stats:
+                stats[language] += 1
+            else:
+                stats[language] = 1
+                
+        return stats
+    except Exception as e:
+        logger.warning(f"获取文件统计时出错: {str(e)}")
+        return {}
 
 @router.get("/repositories/{repo_id}/structure")
 async def get_repository_structure(repo_id: int, db: Session = Depends(get_db)):
