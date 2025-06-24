@@ -203,16 +203,33 @@ const ChatPage = () => {
 
     // 获取知识库列表
     const fetchKnowledgeBases = async () => {
+        console.log('ChatPage: fetchKnowledgeBases CALLED');
         setKbLoading(true);
         try {
-            const response = await axios.get('/knowledge-bases');
-            setKnowledgeBases(response.data || []);
-            if (response.data && response.data.length > 0) {
-                setSelectedKnowledgeBase(response.data[0].id);
+            const response = await axios.get('/knowledge-bases', {
+                headers: {
+                    'ngrok-skip-browser-warning': 'true'
+                }
+            });
+            console.log('Response from /knowledge-bases (ChatPage):', response.data);
+            if (Array.isArray(response.data)) {
+                setKnowledgeBases(response.data);
+                console.log('ChatPage: setKnowledgeBases with ARRAY:', response.data);
+                // setSelectedKnowledgeBase 的逻辑最好在另一个 useEffect 中处理，监听 knowledgeBases 的变化
+                // if (response.data.length > 0 && !selectedKnowledgeBase) {
+                // setSelectedKnowledgeBase(response.data[0].id);
+                // }
+            } else {
+                console.error('Error: /knowledge-bases (ChatPage) did not return an array:', response.data);
+                setKnowledgeBases([]);
+                console.log('ChatPage: setKnowledgeBases with EMPTY ARRAY due to non-array response.');
+                message.error('获取知识库列表失败: 响应格式不正确');
             }
         } catch (error) {
             console.error('获取知识库列表失败:', error);
             message.error('获取知识库列表失败');
+            setKnowledgeBases([]);
+            console.log('ChatPage: setKnowledgeBases with EMPTY ARRAY due to CATCH.');
         } finally {
             setKbLoading(false);
         }
@@ -222,10 +239,14 @@ const ChatPage = () => {
     const fetchRepositories = async () => {
         setRepoLoading(true);
         try {
-            const response = await axios.get('/code/repositories');
+            const response = await axios.get('/code/repositories', {
+                headers: {
+                    'ngrok-skip-browser-warning': 'true'
+                }
+            });
             setRepositories(response.data || []);
             if (response.data && response.data.length > 0) {
-                setSelectedRepository(response.data[0].id);
+                // setSelectedRepository(response.data[0].id); // 自动选择逻辑也最好移到useEffect
             }
         } catch (error) {
             console.error('获取代码仓库列表失败:', error);
@@ -241,24 +262,41 @@ const ChatPage = () => {
         fetchRepositories(); // 添加获取代码仓库的调用
     }, []);
 
+    // 修改：当 knowledgeBases 加载或变化时，处理 selectedKnowledgeBase
+    useEffect(() => {
+        if (knowledgeBases.length > 0 && !selectedKnowledgeBase) {
+            setSelectedKnowledgeBase(knowledgeBases[0].id);
+            console.log(`ChatPage: Auto-selected first KB: ${knowledgeBases[0].id}`);
+        }
+        // 如果 selectedKnowledgeBase 存在但已不在新的 knowledgeBases 列表中，也需要处理
+        else if (selectedKnowledgeBase && knowledgeBases.length > 0 && !knowledgeBases.find(kb => kb.id === selectedKnowledgeBase)) {
+            setSelectedKnowledgeBase(knowledgeBases[0].id); // 或者设为null，让用户重新选择
+            console.log(`ChatPage: Selected KB ${selectedKnowledgeBase} not found in new list, auto-selected first KB: ${knowledgeBases[0].id}`);
+        }
+        else if (knowledgeBases.length === 0 && selectedKnowledgeBase) {
+            setSelectedKnowledgeBase(null); // 如果知识库列表为空，清空选择
+            console.log('ChatPage: Knowledge bases list is empty, clearing selected KB.');
+        }
+    }, [knowledgeBases, selectedKnowledgeBase]);
+
+    // 修改：当 repositories 加载或变化时，处理 selectedRepository (如果需要自动选择)
+    useEffect(() => {
+        if (repositories.length > 0 && !selectedRepository) {
+            setSelectedRepository(repositories[0].id);
+            console.log(`ChatPage: Auto-selected first Repository: ${repositories[0].id}`);
+        }
+        // ... (类似上面对 knowledgeBases 的无效选择处理) ...
+    }, [repositories, selectedRepository]);
+
     // 当知识库变化时，加载对应的提示词
     useEffect(() => {
         if (selectedKnowledgeBase) {
             fetchAgentPromptsForKnowledgeBase(selectedKnowledgeBase);
-
-            // 找出选中知识库的名称
             const selectedKbName = knowledgeBases.find(kb => kb.id === selectedKnowledgeBase)?.name || 'Unknown';
-
-            // 使用非侵入式提示框而非系统消息
             message.info(`已切换到知识库: ${selectedKbName}`);
-
             console.log(`已切换到知识库ID: ${selectedKnowledgeBase}`);
-        } else if (knowledgeBases.length > 0 && !selectedKnowledgeBase) {
-            // Auto-select first KB if none selected and KBs are loaded
-            setSelectedKnowledgeBase(knowledgeBases[0].id);
-            console.log(`自动选择第一个知识库: ${knowledgeBases[0].id}`);
         }
-    }, [selectedKnowledgeBase, knowledgeBases]);
+    }, [selectedKnowledgeBase]); // 移除了 knowledgeBases 依赖，因为上面的useEffect已经处理了它与selectedKnowledgeBase的关系
 
     // 清除聊天记录
     const clearChatHistory = () => {
@@ -585,7 +623,11 @@ const ChatPage = () => {
             const fetchProcessingLogs = async (requestId) => {
                 try {
                     // 实际项目中，这里应该调用后端API获取处理日志
-                    const logsResponse = await axios.get(`/thinking-process/${requestId}`);
+                    const logsResponse = await axios.get(`/thinking-process/${requestId}`, {
+                        headers: {
+                            'ngrok-skip-browser-warning': 'true'
+                        }
+                    });
                     if (logsResponse.data && logsResponse.data.logs) {
                         setMessages(prev => {
                             const newMessages = [...prev];
@@ -625,7 +667,11 @@ const ChatPage = () => {
             const endpoint = useTagRag ? '/chat/tag-rag' : '/ask';
 
             // 向后端发送请求
-            const response = await axios.post(endpoint, payload);
+            const response = await axios.post(endpoint, payload, {
+                headers: {
+                    'ngrok-skip-browser-warning': 'true'
+                }
+            });
 
             // 添加调试输出，帮助诊断问题
             console.log("API Response Data:", response.data);
@@ -1032,6 +1078,8 @@ const ChatPage = () => {
         };
     }, [processingInfoTimer]);
 
+    console.log('ChatPage: RENDERING with knowledgeBases:', knowledgeBases, 'Is Array?', Array.isArray(knowledgeBases));
+
     return (
         <div style={{
             display: 'flex',
@@ -1068,7 +1116,7 @@ const ChatPage = () => {
                         placeholder="选择知识库"
                         dropdownStyle={{ borderRadius: '8px' }}
                     >
-                        {knowledgeBases.map(kb => (
+                        {Array.isArray(knowledgeBases) && knowledgeBases.map(kb => (
                             <Option key={kb.id} value={kb.id}>{kb.name}</Option>
                         ))}
                     </Select>
@@ -1087,7 +1135,7 @@ const ChatPage = () => {
                             placeholder="选择代码仓库"
                             dropdownStyle={{ borderRadius: '8px' }}
                         >
-                            {repositories.map(repo => (
+                            {Array.isArray(repositories) && repositories.map(repo => (
                                 <Option key={repo.id} value={repo.id}>{repo.name}</Option>
                             ))}
                         </Select>

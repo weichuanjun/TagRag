@@ -26,14 +26,34 @@ import KnowledgeBasePage from './pages/KnowledgeBasePage';  // 新增知识库�
 import AgentPromptPage from './pages/AgentPromptPage';  // 新增Agent提示词管理页面
 import GraphVisualizerPage from './pages/GraphVisualizerPage';  // 新增图可视化页面
 import TagManagementPage from './pages/TagManagementPage';  // 新增标签管理页面
+import TestPage from './pages/TestPage';  // 新增测试页面
 // import ManageDocuments from './pages/ManageDocuments'; // 移除导入
 
 // 配置 Axios baseURL
 // 使用REACT_APP_API_BASE_URL环境变量，如果未设置，则默认为 docker-compose 中的后端服务地址
 // 对于浏览器访问场景，默认应为 localhost
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
+// 支持ngrok访问：如果当前域名包含ngrok，则使用相对路径
+const getApiBaseUrl = () => {
+    // 如果设置了环境变量，优先使用
+    if (process.env.REACT_APP_API_BASE_URL) {
+        return process.env.REACT_APP_API_BASE_URL;
+    }
+
+    // 检查当前域名是否包含ngrok
+    if (window.location.hostname.includes('ngrok') || window.location.hostname.includes('ngrok-free.app')) {
+        // 如果是ngrok访问，使用相对路径，让ngrok代理处理
+        return '';
+    }
+
+    // 默认使用localhost
+    return 'http://localhost:8000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 axios.defaults.baseURL = API_BASE_URL;
+axios.defaults.headers.common['ngrok-skip-browser-warning'] = 'true'; // 添加全局请求头
 console.log(`API Base URL set to: ${API_BASE_URL}`); // 用于调试
+console.log(`Current hostname: ${window.location.hostname}`); // 调试当前域名
 
 const { Content, Footer, Sider } = Layout;
 const { Title } = Typography;
@@ -97,6 +117,9 @@ function App() {
                     <Menu.Item key="7" icon={<TagsOutlined />}>
                         <Link to="/tags">标签管理</Link>
                     </Menu.Item>
+                    <Menu.Item key="8" icon={<ExperimentOutlined />}>
+                        <Link to="/test">API测试</Link>
+                    </Menu.Item>
                     {/* Remove menu item for document management */}
                     {/* <Menu.Item key="8" icon={<FileTextOutlined />}>
                         <Link to="/documents">文档管理</Link>
@@ -117,6 +140,7 @@ function App() {
                             <Route path="/agent-prompt" element={<AgentPromptPage />} />
                             <Route path="/graph-view" element={<GraphVisualizerPage />} />
                             <Route path="/tags" element={<TagManagementPage />} />
+                            <Route path="/test" element={<TestPage />} />
                             {/* Remove route for document management */}
                             {/* <Route path="/documents" element={<ManageDocuments />} /> */}
                             <Route path="/" element={<Navigate to="/chat" replace />} />

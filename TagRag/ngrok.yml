@@ -1,0 +1,9 @@
+version: "2"
+authtoken: 2xAHE6t2Z2Kh0nHglQHFdLhD1zc_6Zy8zkX3UWqiF6FxBEBYk
+tunnels:
+  backend-api: # 你给后端隧道起的名字，可以自定义
+    proto: http
+    addr: 8000 # 你后端运行的端口
+  frontend-app: # 你给前端隧道起的名字，可以自定义
+    proto: http
+    addr: 3000 # 你前端运行的端口

@@ -55,22 +55,26 @@ const FileUploadPage = () => {
     const fetchDocuments = useCallback(async () => {
         setLoadingDocuments(true);
         try {
-            const response = await fetch('http://localhost:8000/documents/list');
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const data = await response.json();
+            const response = await axios.get('/documents/list');
+            const data = response.data;
 
-            // 更新数据源，确保每个文档对象都有 key 和 tags (即使是空数组)
-            const formattedData = data.map(doc => ({
-                ...doc,
-                key: doc.id, // Ensure key is set to document id
-                tags: doc.tags || [], // Ensure tags is an array
-            }));
-            setDocuments(formattedData);
+            if (Array.isArray(data)) {
+                const formattedData = data.map(doc => ({
+                    ...doc,
+                    key: doc.id,
+                    tags: doc.tags || [],
+                }));
+                setDocuments(formattedData);
+            } else {
+                console.error('获取文档列表失败: 响应数据不是一个数组', data);
+                message.error('获取文档列表失败: 响应格式不正确');
+                setDocuments([]);
+            }
         } catch (error) {
-            message.error(`获取文档列表失败: ${error.message}`);
-            console.error("获取文档列表失败:", error);
+            const errorMessage = error.response?.data?.detail || error.message || '获取文档列表失败';
+            message.error(`获取文档列表失败: ${errorMessage}`);
+            console.error("获取文档列表失败:", error.response || error);
+            setDocuments([]);
         } finally {
             setLoadingDocuments(false);
         }
@@ -116,13 +120,21 @@ const FileUploadPage = () => {
         setKbLoading(true);
         try {
             const response = await axios.get('/knowledge-bases');
-            setKnowledgeBases(response.data || []);
-            if (response.data && response.data.length > 0 && !selectedKnowledgeBase) {
-                setSelectedKnowledgeBase(response.data[0].id);
+            console.log('Response from /knowledge-bases (FileUploadPage):', response.data);
+            if (Array.isArray(response.data)) {
+                setKnowledgeBases(response.data);
+                if (response.data.length > 0 && !selectedKnowledgeBase) {
+                    setSelectedKnowledgeBase(response.data[0].id);
+                }
+            } else {
+                console.error('Error: /knowledge-bases (FileUploadPage) did not return an array:', response.data);
+                setKnowledgeBases([]);
+                message.error('获取知识库列表失败 (FileUploadPage): 响应格式不正确');
             }
         } catch (error) {
-            console.error('获取知识库列表失败:', error);
-            message.error('获取知识库列表失败');
+            console.error('获取知识库列表失败 (FileUploadPage):', error);
+            message.error('获取知识库列表失败 (FileUploadPage)');
+            setKnowledgeBases([]);
         } finally {
             setKbLoading(false);
         }

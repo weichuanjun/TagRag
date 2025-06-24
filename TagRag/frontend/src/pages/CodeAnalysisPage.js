@@ -241,18 +241,31 @@ const CodeAnalysisPage = () => {
     const fetchKnowledgeBases = useCallback(async () => {
         try {
             setKbLoading(true);
-            const response = await axios.get('/knowledge-bases');
-            setKnowledgeBases(response.data);
-            if (response.data.length > 0 && !selectedKnowledgeBase) {
-                setSelectedKnowledgeBase(response.data[0].id);
+            const response = await axios.get('/knowledge-bases', {
+                headers: {
+                    'ngrok-skip-browser-warning': 'true'
+                }
+            });
+            // 确保 response.data 是一个数组
+            if (Array.isArray(response.data)) {
+                setKnowledgeBases(response.data);
+                if (response.data.length > 0 && !selectedKnowledgeBase) {
+                    setSelectedKnowledgeBase(response.data[0].id);
+                }
+            } else {
+                // 如果不是数组，则视作错误，设置为空数组
+                console.error("CodeAnalysisPage: /knowledge-bases did not return an array:", response.data);
+                message.error('加载知识库失败: 响应格式不正确');
+                setKnowledgeBases([]);
             }
         } catch (error) {
             message.error('加载知识库失败');
-            console.error(error);
+            console.error("CodeAnalysisPage: Error fetching knowledge bases:", error);
+            setKnowledgeBases([]); // 确保在捕获到错误时设置为空数组
         } finally {
             setKbLoading(false);
         }
-    }, []);
+    }, [selectedKnowledgeBase]); // 移除了 setSelectedKnowledgeBase 依赖，因为它在 effect 外部
 
     // 加载特定知识库中的代码库
     const fetchRepositoriesByKnowledgeBase = useCallback(async (kbId) => {
@@ -279,20 +292,37 @@ const CodeAnalysisPage = () => {
 
     // 加载仓库列表
     const fetchRepositories = useCallback(async () => {
+        setLoading(true); // 或者一个专门的 repoLoading 状态
         try {
-            setLoading(true);
-            const response = await axios.get('/code/repositories');
-            setRepositories(response.data);
-            if (response.data.length > 0 && !currentRepo) {
-                setCurrentRepo(response.data[0]);
+            const response = await axios.get('/code/repositories', { // 假设的端点
+                headers: {
+                    'ngrok-skip-browser-warning': 'true'
+                }
+            });
+            if (Array.isArray(response.data)) {
+                setRepositories(response.data);
+                // Optionally select first repo if needed
+                // if (response.data.length > 0 && !currentRepo) {
+                //     setCurrentRepo(response.data[0].id); 
+                // }
+            } else {
+                console.error("CodeAnalysisPage: /code/repositories did not return an array:", response.data);
+                message.error('加载代码仓库失败: 响应格式不正确');
+                setRepositories([]);
             }
         } catch (error) {
-            message.error('加载代码库失败');
-            console.error(error);
+            console.error("CodeAnalysisPage: Error fetching repositories:", error);
+            message.error('加载代码仓库列表失败');
+            setRepositories([]);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, []); // currentRepo 依赖可能需要根据实际逻辑添加
+
+    useEffect(() => {
+        fetchKnowledgeBases();
+        fetchRepositories(); // 调用获取代码仓库列表的函数
+    }, [fetchKnowledgeBases, fetchRepositories]);
 
     // 改进的仓库摘要加载函数，拆分为两步：基本信息和详细组件
     const fetchRepoSummary = useCallback(async (repoId) => {
@@ -430,27 +460,6 @@ const CodeAnalysisPage = () => {
             setLoadingComponent(false);
         }
     };
-
-    // 首次加载
-    useEffect(() => {
-        fetchKnowledgeBases();
-    }, []);
-
-    // 当选择的知识库变化时
-    useEffect(() => {
-        if (selectedKnowledgeBase) {
-            fetchRepositoriesByKnowledgeBase(selectedKnowledgeBase);
-        } else {
-            fetchRepositories();
-        }
-    }, [selectedKnowledgeBase]);
-
-    // 当代码库变化时
-    useEffect(() => {
-        if (currentRepo) {
-            fetchRepoSummary(currentRepo.id);
-        }
-    }, [currentRepo]);
 
     // 搜索代码
     const handleSearch = async (query) => {
@@ -1382,7 +1391,7 @@ const CodeAnalysisPage = () => {
                 onChange={setSelectedKnowledgeBase}
             >
                 <Option value={null}>所有代码库</Option>
-                {knowledgeBases.map(kb => (
+                {Array.isArray(knowledgeBases) && knowledgeBases.map(kb => (
                     <Option key={kb.id} value={kb.id}>{kb.name}</Option>
                 ))}
             </Select>
@@ -1399,7 +1408,7 @@ const CodeAnalysisPage = () => {
                 }}
                 disabled={!repositories || repositories.length === 0}
             >
-                {repositories.map(repo => (
+                {Array.isArray(repositories) && repositories.map(repo => (
                     <Option key={repo.id} value={repo.id}>{repo.name}</Option>
                 ))}
             </Select>
