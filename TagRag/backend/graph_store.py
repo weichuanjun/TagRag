@@ -7,8 +7,8 @@ import time
 from sqlalchemy.orm import Session
 
 # 导入配置
-from config import VECTOR_DB_DIR
-from models import Tag, Document, DocumentChunk, get_db
+from .config import VECTOR_DB_DIR
+from .models import Tag, Document, DocumentChunk, get_db
 
 logger = logging.getLogger(__name__)
 

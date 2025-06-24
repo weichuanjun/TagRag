@@ -1,10 +1,10 @@
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
-import logging
 
-from models import get_db, KnowledgeBase, Tag
-from graph_store import GraphStore
+from .models import get_db, KnowledgeBase, Tag
+from .graph_store import GraphStore
 
 router = APIRouter(prefix="/graph", tags=["graph-visualization"])
 logger = logging.getLogger(__name__)

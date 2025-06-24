@@ -9,21 +9,21 @@ import math
 import datetime
 
 # 导入VectorStore 和数据库模型
-from vector_store import VectorStore
-from models import Tag as TagModel, get_db
-from models import Tag as DBTag # Ensure DBTag is imported
+from .vector_store import VectorStore
+from .models import Tag as TagModel, get_db
+from .models import Tag as DBTag # Ensure DBTag is imported
 from sqlalchemy.orm import Session # Ensure Session is imported for type hinting if needed
 
 # 导入配置文件和新的服务
-from config import (
+from .config import (
     get_autogen_config,
     AGENT_PROMPTS,
     TAG_FILTER_RETRIEVAL_K,
     CONTEXT_TOKEN_LIMIT,
     T_CUS_EMBEDDING_MODEL # Needed for embedding instance in TagRAG
 )
-from scoring_service import calculate_t_cus_score, greedy_token_constrained_selection, TagGraphAccessor
-from tag_routes import LLMClient
+from .scoring_service import calculate_t_cus_score, greedy_token_constrained_selection, TagGraphAccessor
+from .tag_routes import LLMClient
 from langchain_community.embeddings import HuggingFaceEmbeddings # Moved import up
 
 # --- Pydantic Models for API Response ---

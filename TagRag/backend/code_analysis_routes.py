@@ -10,14 +10,14 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Path, UploadFile, 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 
-from models import get_db, CodeRepository, CodeFile, CodeComponent, ComponentDependency, KnowledgeBase
-from code_analyzer import CodeAnalyzer
-from enhanced_code_analyzer import EnhancedCodeAnalyzer
-from analysis_service import CodeAnalysisService
-from vector_store import VectorStore
+from .models import get_db, CodeRepository, CodeFile, CodeComponent, ComponentDependency, KnowledgeBase
+from .code_analyzer import CodeAnalyzer
+from .enhanced_code_analyzer import EnhancedCodeAnalyzer
+from .analysis_service import CodeAnalysisService
+from .vector_store import VectorStore
 
 # 导入向量化函数
-from utils.vectorize_repo import vectorize_repository
+from .utils.vectorize_repo import vectorize_repository
 
 router = APIRouter(prefix="/code", tags=["code-analysis"])
 logger = logging.getLogger(__name__)
@@ -243,7 +243,7 @@ async def upload_repository(
 @router.get("/repositories")
 async def list_repositories(db: Session = Depends(get_db)):
     """列出所有代码仓库"""
-    from models import CodeRepository
+    from .models import CodeRepository
     
     try:
         repositories = db.query(CodeRepository).all()
@@ -564,7 +564,7 @@ async def generate_component_summary(component_id: int, db: Session = Depends(ge
 async def create_example_repository(db: Session = Depends(get_db)):
     """创建一个示例代码库用于测试"""
     try:
-        from models import CodeRepository, CodeFile, CodeComponent
+        from .models import CodeRepository, CodeFile, CodeComponent
         import os
         from datetime import datetime
         

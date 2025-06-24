@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 import logging
 
-from models import get_db, AgentPrompt, KnowledgeBase
-from config import AGENT_PROMPTS  # 导入默认提示词配置
+from .models import get_db, AgentPrompt, KnowledgeBase
+from .config import AGENT_PROMPTS  # 导入默认提示词配置
 
 router = APIRouter(prefix="/agent-prompts", tags=["agent-prompts"])
 

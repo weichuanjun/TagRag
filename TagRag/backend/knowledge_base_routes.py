@@ -6,23 +6,29 @@ from sqlalchemy.sql import func
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from models import get_db, KnowledgeBase, CodeRepository, Document
+from .models import get_db, KnowledgeBase, CodeRepository, Document, User
+from .auth import get_current_active_user
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
 # 创建路由
 router = APIRouter(
-    prefix="",
+    prefix="/knowledge-bases",
     tags=["knowledge_bases"]
 )
 
-@router.get("/knowledge-bases")
-async def list_knowledge_bases(db: Session = Depends(get_db)):
-    """获取所有知识库列表"""
+@router.get("")
+async def list_knowledge_bases(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """获取当前用户组织的所有知识库列表"""
     try:
-        # 查询所有知识库
-        knowledge_bases = db.query(KnowledgeBase).all()
+        # 查询当前用户组织的所有知识库
+        knowledge_bases = db.query(KnowledgeBase).filter(
+            KnowledgeBase.organization_id == current_user.organization_id
+        ).all()
         
         # 手动计算每个知识库的代码库和文档数量
         result = []
@@ -55,19 +61,20 @@ async def list_knowledge_bases(db: Session = Depends(get_db)):
         logger.error(f"获取知识库列表时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取知识库列表失败: {str(e)}")
 
-@router.post("/knowledge-bases")
+@router.post("")
 async def create_knowledge_base(
     name: str = Body(...),
     description: Optional[str] = Body(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
-    """创建新的知识库"""
+    """为当前用户组织创建新的知识库"""
     try:
-        # 创建知识库
+        # 创建知识库并关联到当前用户的组织
         kb = KnowledgeBase(
             name=name,
             description=description,
-            created_at=datetime.now()
+            organization_id=current_user.organization_id
         )
         db.add(kb)
         db.commit()
@@ -86,16 +93,24 @@ async def create_knowledge_base(
         logger.error(f"创建知识库时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"创建知识库失败: {str(e)}")
 
-@router.delete("/knowledge-bases/{kb_id}")
-async def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)):
-    """删除知识库及其关联的代码库和文档"""
+@router.delete("/{kb_id}")
+async def delete_knowledge_base(
+    kb_id: int, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """删除指定ID的知识库，会校验知识库是否属于当前用户的组织"""
     try:
-        # 查找知识库
-        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
-        if not kb:
-            raise HTTPException(status_code=404, detail=f"找不到ID为{kb_id}的知识库")
+        # 查找属于当前用户组织的知识库
+        kb = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id == kb_id,
+            KnowledgeBase.organization_id == current_user.organization_id
+        ).first()
         
-        # 删除知识库（关联的代码库和文档会自动级联删除）
+        if not kb:
+            raise HTTPException(status_code=404, detail=f"找不到ID为{kb_id}的知识库或权限不足")
+        
+        # 删除知识库
         db.delete(kb)
         db.commit()
         
@@ -107,14 +122,21 @@ async def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)):
         logger.error(f"删除知识库时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"删除知识库失败: {str(e)}")
 
-@router.get("/knowledge-bases/{kb_id}/repositories")
-async def list_knowledge_base_repositories(kb_id: int, db: Session = Depends(get_db)):
+@router.get("/{kb_id}/repositories")
+async def list_knowledge_base_repositories(
+    kb_id: int, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
     """获取知识库中的所有代码库"""
     try:
         # 查找知识库
-        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+        kb = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id == kb_id,
+            KnowledgeBase.organization_id == current_user.organization_id
+        ).first()
         if not kb:
-            raise HTTPException(status_code=404, detail=f"找不到ID为{kb_id}的知识库")
+            raise HTTPException(status_code=404, detail=f"找不到ID为{kb_id}的知识库或权限不足")
         
         # 查询知识库中的代码库
         repositories = db.query(CodeRepository).filter(
@@ -143,14 +165,21 @@ async def list_knowledge_base_repositories(kb_id: int, db: Session = Depends(get
         logger.error(f"获取知识库代码库列表时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取知识库代码库列表失败: {str(e)}")
 
-@router.get("/knowledge-bases/{kb_id}/documents")
-async def list_knowledge_base_documents(kb_id: int, db: Session = Depends(get_db)):
+@router.get("/{kb_id}/documents")
+async def list_knowledge_base_documents(
+    kb_id: int, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
     """获取知识库中的所有文档"""
     try:
         # 查找知识库
-        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+        kb = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id == kb_id,
+            KnowledgeBase.organization_id == current_user.organization_id
+        ).first()
         if not kb:
-            raise HTTPException(status_code=404, detail=f"找不到ID为{kb_id}的知识库")
+            raise HTTPException(status_code=404, detail=f"找不到ID为{kb_id}的知识库或权限不足")
         
         # 尝试查询知识库中的文档
         try:

@@ -1,10 +1,11 @@
-from sqlalchemy import Column, Integer, String, Text, Float, Boolean, ForeignKey, DateTime, JSON, Table
+from sqlalchemy import Column, Integer, String, Text, Float, Boolean, ForeignKey, DateTime, JSON, Table, Enum, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy import create_engine
 import datetime
 import os
 from sqlalchemy import event # For custom event listeners if needed later
+import enum
 
 # 创建数据库目录
 os.makedirs("data/db", exist_ok=True)
@@ -28,6 +29,49 @@ def get_db():
 
 Base = declarative_base()
 
+# ==================================================================
+# 新增用户和组织模型
+# ==================================================================
+
+class UserRole(enum.Enum):
+    ADMIN = "admin"
+    MEMBER = "member"
+
+class Organization(Base):
+    """组织模型，所有资源的顶层容器"""
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.datetime.now)
+
+    users = relationship("User", back_populates="organization", cascade="all, delete-orphan")
+    knowledge_bases = relationship("KnowledgeBase", back_populates="organization", cascade="all, delete-orphan")
+    code_repositories = relationship("CodeRepository", back_populates="organization", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="organization", cascade="all, delete-orphan")
+    tags = relationship("Tag", back_populates="organization", cascade="all, delete-orphan")
+
+
+class User(Base):
+    """用户模型"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=True)
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    role = Column(Enum(UserRole), default=UserRole.MEMBER, nullable=False)
+    
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    organization = relationship("Organization", back_populates="users")
+    
+    question_history = relationship("QuestionHistory", back_populates="user", cascade="all, delete-orphan")
+
+# ==================================================================
+# 修改现有模型以包含 organization_id
+# ==================================================================
+
 # 知识库模型
 class KnowledgeBase(Base):
     """知识库模型，用于组织管理多个代码库和文档"""
@@ -38,6 +82,9 @@ class KnowledgeBase(Base):
     description = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.now)
     updated_at = Column(DateTime, default=datetime.datetime.now, onupdate=datetime.datetime.now)
+
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    organization = relationship("Organization", back_populates="knowledge_bases")
 
     # 关联关系
     repositories = relationship("CodeRepository", back_populates="knowledge_base", cascade="all, delete-orphan")
@@ -70,7 +117,9 @@ class CodeRepository(Base):
     # 关联关系
     files = relationship("CodeFile", back_populates="repository", cascade="all, delete-orphan")
     components = relationship("CodeComponent", back_populates="repository", cascade="all, delete-orphan")
-    queries = relationship("UserQuery", back_populates="repository")
+    
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    organization = relationship("Organization", back_populates="code_repositories")
 
 # 代码文件模型
 class CodeFile(Base):
@@ -120,7 +169,6 @@ class CodeComponent(Base):
     dependents = relationship("ComponentDependency", 
                              foreign_keys="ComponentDependency.target_id", 
                              back_populates="target")
-    queries = relationship("UserQuery", secondary="component_queries")
 
 # 组件依赖关系模型
 class ComponentDependency(Base):
@@ -137,27 +185,41 @@ class ComponentDependency(Base):
     source = relationship("CodeComponent", foreign_keys=[source_id], back_populates="dependencies")
     target = relationship("CodeComponent", foreign_keys=[target_id], back_populates="dependents")
 
-# 用户查询历史模型
-class UserQuery(Base):
-    """用户查询历史"""
-    __tablename__ = 'user_queries'
+# ==================================================================
+# 用户问答历史模型 (替换原 UserQuery)
+# ==================================================================
+class QuestionHistory(Base):
+    """用户问答历史"""
+    __tablename__ = 'question_history'
     
     id = Column(Integer, primary_key=True)
     query_text = Column(Text, nullable=False)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-    repository_id = Column(Integer, ForeignKey('code_repositories.id'))
-    result_summary = Column(Text)
-    used_llm = Column(Boolean, default=False)
+    answer_text = Column(Text, nullable=True)
+    thinking_process = Column(JSON, nullable=True)
+    timestamp = Column(DateTime, default=datetime.datetime.now)
     
-    # 关系
-    repository = relationship("CodeRepository", back_populates="queries")
+    user_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)
+    user = relationship("User", back_populates="question_history")
+    
+    knowledge_base_id = Column(Integer, ForeignKey('knowledge_bases.id'), nullable=True)
+    knowledge_base = relationship("KnowledgeBase")
+    
+    repository_id = Column(Integer, ForeignKey('code_repositories.id'), nullable=True)
+    repository = relationship("CodeRepository")
 
-# 组件查询关联表
-component_queries = Table(
-    'component_queries', Base.metadata,
-    Column('component_id', Integer, ForeignKey('components.id')),
-    Column('query_id', Integer, ForeignKey('user_queries.id'))
-)
+# ==================================================================
+# 用户原始查询记录模型
+# ==================================================================
+class UserQuery(Base):
+    """记录用户在代码分析中原始搜索查询"""
+    __tablename__ = 'user_queries'
+
+    id = Column(Integer, primary_key=True)
+    query_text = Column(Text, nullable=False)
+    timestamp = Column(DateTime, default=datetime.datetime.now)
+
+    repository_id = Column(Integer, ForeignKey('code_repositories.id'), nullable=True)
+    repository = relationship("CodeRepository")
 
 # 标签模型
 class Tag(Base):
@@ -165,7 +227,11 @@ class Tag(Base):
     __tablename__ = "tags"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, index=True, unique=True) # Ensure tag names are unique
+    name = Column(String, nullable=False, index=True) # Tag names should be unique per organization
+
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    organization = relationship("Organization", back_populates="tags")
+
     color = Column(String, default="#1890ff")
     description = Column(String, nullable=True)
     tag_type = Column(String, default="general") 
@@ -256,6 +322,9 @@ class Document(Base):
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
     tags = relationship("Tag", secondary=document_tags, backref="documents")
 
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    organization = relationship("Organization", back_populates="documents")
+
 # 文档块模型
 class DocumentChunk(Base):
     """文档块模型"""
@@ -315,9 +384,19 @@ def rebuild_document_tables():
 
 # 如果直接运行此模块，创建数据库表
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "rebuild_docs":
-        rebuild_document_tables()
-    else:
+    # 检查数据库文件是否存在
+    db_file = DATABASE_URL.split("///")[-1]
+    if not os.path.exists(db_file):
+        print("数据库文件不存在，正在创建...")
         create_tables()
-        print("数据库表已创建。") 
+        print("数据库表已创建。")
+    else:
+        print("数据库文件已存在。")
+        # You might want to add logic here for migrations in the future
+        # For now, we assume the schema is up-to-date if the file exists.
+        # To be safe, let's create tables if they don't exist anyway.
+        create_tables()
+        print("已确认所有表都存在。")
+
+# Add a unique constraint for tag name per organization
+Tag.__table__.append_constraint(UniqueConstraint('name', 'organization_id', name='uq_tag_name_organization')) 

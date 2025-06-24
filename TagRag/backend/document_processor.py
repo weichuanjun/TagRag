@@ -17,7 +17,7 @@ from langchain_community.vectorstores.utils import filter_complex_metadata
 import warnings
 import logging
 from sqlalchemy.orm import Session
-from models import Document as DBDocument, DocumentChunk
+from .models import Tag as DBTag, Document as DBDocument, DocumentChunk
 import datetime
 import tempfile
 import json
@@ -27,8 +27,8 @@ import tiktoken
 from fastapi import HTTPException
 
 # Import LLMClient and Tag model for auto-tagging
-from tag_routes import llm_client # Assuming llm_client is an instance of LLMClient
-from models import Tag as DBTag # Alias to avoid conflict with Langchain Document's Tag
+from .tag_routes import llm_client # Assuming llm_client is an instance of LLMClient
+from .models import Tag as DBTag, Document as DBDocument, DocumentChunk # Alias to avoid conflict with Langchain Document's Tag
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)

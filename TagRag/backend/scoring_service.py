@@ -3,7 +3,7 @@ import math
 from typing import List, Dict, Any, Optional, Tuple
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
-from config import (
+from .config import (
     T_CUS_ALPHA,
     T_CUS_BETA,
     T_CUS_GAMMA,

@@ -7,12 +7,13 @@ import logging
 import asyncio
 from typing import Optional
 
-# 添加项目根目录到路径
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# 将项目根目录添加到Python路径，确保可以找到顶级模块
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from models import get_db, CodeRepository
-from enhanced_code_analyzer import EnhancedCodeAnalyzer
-from vector_store import VectorStore
+from sqlalchemy.orm import Session
+from ..models import get_db, CodeRepository
+from ..enhanced_code_analyzer import EnhancedCodeAnalyzer
+from ..vector_store import VectorStore
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

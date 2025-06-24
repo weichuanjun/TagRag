@@ -6,7 +6,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import logging
 
-from models import CodeRepository, CodeFile, CodeComponent, ComponentDependency, UserQuery
+from .models import CodeRepository, CodeFile, CodeComponent, ComponentDependency, UserQuery
 
 logger = logging.getLogger(__name__)
 

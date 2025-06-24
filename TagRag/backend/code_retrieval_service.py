@@ -1,8 +1,8 @@
 import logging
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session, joinedload
-from models import CodeRepository, CodeComponent
-from vector_store import VectorStore
+from .models import CodeRepository, CodeComponent
+from .vector_store import VectorStore
 from langchain.schema import Document
 
 logger = logging.getLogger(__name__)

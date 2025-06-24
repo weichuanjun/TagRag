@@ -16,29 +16,35 @@ os.makedirs("data/db", exist_ok=True)
 os.makedirs("data/vector_db", exist_ok=True)
 
 # 导入配置模块
-from config import VECTOR_DB_DIR
+from .config import VECTOR_DB_DIR
 
 # 导入原有功能模块
-from vector_store import VectorStore
-from document_processor import DocumentProcessor
-from agent_manager import AgentManager, TagRAGChatResponse, CodeSnippetInfo
-from models import create_tables, get_db, CodeRepository, KnowledgeBase, Document as DBDocument, DocumentChunk, Tag as DBTag, document_tags, TagDependency
-from enhanced_code_analyzer import EnhancedCodeAnalyzer, CodeComponent, CodeFile
-from code_retrieval_service import CodeRetrievalService
+from .vector_store import VectorStore
+from .document_processor import DocumentProcessor
+from .agent_manager import AgentManager, TagRAGChatResponse, CodeSnippetInfo
+from .models import create_tables, get_db, CodeRepository, KnowledgeBase, Document as DBDocument, DocumentChunk, Tag as DBTag, document_tags, TagDependency
+from .enhanced_code_analyzer import EnhancedCodeAnalyzer, CodeComponent, CodeFile
+from .code_retrieval_service import CodeRetrievalService
+
+# 导入认证路由
+from .auth_routes import router as auth_router
 
 # 导入新增的代码分析模块
-from code_analysis_routes import router as code_analysis_router
+from .code_analysis_routes import router as code_analysis_router
 # 导入知识库管理模块
-from knowledge_base_routes import router as knowledge_base_router
+from .knowledge_base_routes import router as knowledge_base_router
 # 导入Agent Prompt管理模块
-from agent_prompt_routes import router as agent_prompt_router
+from .agent_prompt_routes import router as agent_prompt_router
 # 导入图可视化模块
-from graph_visualizer import router as graph_router
+from .graph_visualizer import router as graph_router
 # 导入标签管理模块
-from tag_routes import router as tag_router
+from .tag_routes import router as tag_router
 
 # 导入必要的模块以处理文档分析
-from tag_routes import llm_client
+from .tag_routes import llm_client
+
+# 导入初始化函数
+from .init_db import init_db
 
 # 配置日志
 logging.basicConfig(
@@ -55,6 +61,12 @@ logger = logging.getLogger(__name__)
 # 创建FastAPI应用
 app = FastAPI(title="RAG Agent API", description="基于AutoGen的多智能体RAG系统")
 
+@app.on_event("startup")
+def on_startup():
+    print("Running startup tasks...")
+    init_db()
+    print("Startup tasks complete.")
+
 # 添加CORS中间件
 app.add_middleware(
     CORSMiddleware,
@@ -63,6 +75,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册认证路由
+app.include_router(auth_router, prefix="/auth")
 
 # 初始化组件
 default_vector_store = VectorStore()

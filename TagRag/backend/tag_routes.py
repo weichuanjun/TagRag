@@ -7,8 +7,9 @@ import re
 from sqlalchemy import text
 import time
 
-from models import get_db, Tag, Document, DocumentChunk, document_tags, document_chunk_tags, KnowledgeBase, TagDependency
-from config import get_autogen_config
+from .models import get_db, Tag, Document, DocumentChunk, document_tags, document_chunk_tags, KnowledgeBase, TagDependency, User
+from .config import get_autogen_config
+from .auth import get_current_active_user
 
 router = APIRouter(prefix="", tags=["tags-management"])
 logger = logging.getLogger(__name__)
@@ -121,11 +122,13 @@ llm_client = LLMClient()
 @router.get("/tags")
 async def get_all_tags(
     knowledge_base_id: Optional[int] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """获取所有标签，可选按知识库ID过滤"""
     try:
-        query = db.query(Tag)
+        org_id = current_user.organization_id
+        query = db.query(Tag).filter(Tag.organization_id == org_id)
         
         # 如果指定了知识库ID，通过文档-标签关系过滤标签
         if knowledge_base_id is not None:
@@ -184,7 +187,8 @@ async def create_tag(
     related_content: Optional[str] = Body(None),
     hierarchy_level: Optional[str] = Body("leaf"),  # 新增层级参数，默认为叶节点
     is_system: Optional[bool] = Body(False),  # 新增是否为系统预设标签参数
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     创建新标签
@@ -192,8 +196,11 @@ async def create_tag(
     支持创建多个根标签（root），不再限制每种类型只能有一个根标签
     """
     try:
-        # 检查是否已存在同名标签
-        existing_tag = db.query(Tag).filter(Tag.name == name).first()
+        # Check for existing tag *within the organization*
+        existing_tag = db.query(Tag).filter(
+            Tag.name == name, 
+            Tag.organization_id == current_user.organization_id
+        ).first()
         if existing_tag:
             return {"id": existing_tag.id, "name": existing_tag.name, "color": existing_tag.color}
         
@@ -221,7 +228,8 @@ async def create_tag(
             importance=importance,
             related_content=related_content,
             hierarchy_level=hierarchy_level,
-            is_system=is_system
+            is_system=is_system,
+            organization_id=current_user.organization_id
         )
         
         db.add(tag)

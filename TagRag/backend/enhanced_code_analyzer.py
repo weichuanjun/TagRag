@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 
 from sqlalchemy.orm import Session
-from models import CodeRepository, CodeFile, CodeComponent, ComponentDependency
+from .models import CodeRepository, CodeFile, CodeComponent, ComponentDependency
 from langchain.schema import Document  # 添加Document导入
 
 logger = logging.getLogger(__name__)
@@ -189,7 +189,7 @@ class EnhancedCodeAnalyzer:
             await self._analyze_generic_file(code_file, content)
             
         return code_file
-        
+    
     async def _analyze_python_file(self, code_file: CodeFile, content: str):
         """分析Python文件，提取函数和类
         

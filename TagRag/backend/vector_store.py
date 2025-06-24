@@ -11,7 +11,7 @@ import logging
 from langchain_community.vectorstores.utils import filter_complex_metadata
 
 # 导入配置
-from config import EMBEDDING_MODEL, VECTOR_DB_DIR
+from .config import EMBEDDING_MODEL, VECTOR_DB_DIR
 
 logger = logging.getLogger(__name__)
 

@@ -5,9 +5,15 @@
 """
 
 import os
+import sys
 import shutil
 import logging
-from models import create_tables
+
+# 将项目根目录添加到Python路径
+# 这是一种确保无论从哪里运行脚本都能找到模块的方法
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from .models import create_tables
 
 # 配置日志
 logging.basicConfig(
@@ -67,7 +73,7 @@ def create_default_knowledge_base():
     """创建默认知识库"""
     try:
         from sqlalchemy.orm import Session
-        from models import KnowledgeBase, SessionLocal
+        from .models import KnowledgeBase, SessionLocal
         
         # 创建会话
         db = SessionLocal()
@@ -95,7 +101,7 @@ def create_default_prompts():
     """创建默认的Agent提示词"""
     try:
         from sqlalchemy.orm import Session
-        from models import AgentPrompt, SessionLocal
+        from .models import AgentPrompt, SessionLocal
         
         # 创建会话
         db = SessionLocal()
@@ -159,7 +165,7 @@ def create_default_tags():
     """创建系统默认标签"""
     try:
         from sqlalchemy.orm import Session
-        from models import Tag, SessionLocal
+        from .models import Tag, SessionLocal
         
         # 创建会话
         db = SessionLocal()

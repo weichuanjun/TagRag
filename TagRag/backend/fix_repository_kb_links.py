@@ -6,16 +6,17 @@ import logging
 import sys
 import os
 import asyncio
+from sqlalchemy.orm import Session
 
-# 添加当前目录到路径，以便导入其他模块
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 将项目根目录添加到Python路径
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # 导入所需模块
-from models import get_db, CodeRepository, KnowledgeBase
+from .models import get_db, CodeRepository, KnowledgeBase
 from utils.vectorize_repo import vectorize_repository
 
 async def fix_repositories():
