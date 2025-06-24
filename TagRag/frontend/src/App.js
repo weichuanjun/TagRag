@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Routes, Route, Link, Navigate } from 'react-router-dom';
-import { Layout, Menu, ConfigProvider, theme, Typography } from 'antd';
+import { Layout, Menu, Typography } from 'antd';
 import {
     MessageOutlined,
     CodeOutlined,
@@ -8,15 +8,10 @@ import {
     DatabaseOutlined,
     RobotOutlined,
     ShareAltOutlined,
-    TagsOutlined,  // 添加标签图标
-    UploadOutlined,
-    WechatOutlined,
-    ApartmentOutlined,
-    SettingOutlined,
+    TagsOutlined,
     ExperimentOutlined
-    // FileTextOutlined // 移除图标
 } from '@ant-design/icons';
-import axios from 'axios'; // 导入axios
+import axios from 'axios';
 
 // 导入页面组件
 import ChatPage from './pages/ChatPage';
@@ -26,14 +21,23 @@ import KnowledgeBasePage from './pages/KnowledgeBasePage';  // 新增知识库�
 import AgentPromptPage from './pages/AgentPromptPage';  // 新增Agent提示词管理页面
 import GraphVisualizerPage from './pages/GraphVisualizerPage';  // 新增图可视化页面
 import TagManagementPage from './pages/TagManagementPage';  // 新增标签管理页面
+import DebugPage from './pages/DebugPage';  // 新增调试页面
 // import ManageDocuments from './pages/ManageDocuments'; // 移除导入
 
-// 配置 Axios baseURL
-// 使用REACT_APP_API_BASE_URL环境变量，如果未设置，则默认为 docker-compose 中的后端服务地址
-// 对于浏览器访问场景，默认应为 localhost
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
+// ==================================================================
+// 关键修改：确保开发环境使用代理
+// ==================================================================
+// 在开发环境中，baseURL应为空字符串，以便axios发送相对路径的请求（如 /knowledge-bases），
+// 这样请求才能被 React 开发服务器的 'proxy' 配置捕获并转发到 http://localhost:8000。
+// 如果设置为 'http://localhost:8000'，请求将直接发送到该地址，导致浏览器因CORS策略而阻止它。
+const API_BASE_URL = process.env.NODE_ENV === 'production'
+    ? process.env.REACT_APP_API_BASE_URL || ''
+    : '';
+
 axios.defaults.baseURL = API_BASE_URL;
-console.log(`API Base URL set to: ${API_BASE_URL}`); // 用于调试
+
+console.log(`[App.js] Axios baseURL is set to: "${API_BASE_URL || '(empty string, using proxy)'}"`);
+// ==================================================================
 
 const { Content, Footer, Sider } = Layout;
 const { Title } = Typography;
@@ -97,6 +101,9 @@ function App() {
                     <Menu.Item key="7" icon={<TagsOutlined />}>
                         <Link to="/tags">标签管理</Link>
                     </Menu.Item>
+                    <Menu.Item key="8" icon={<ExperimentOutlined />}>
+                        <Link to="/debug">调试页面</Link>
+                    </Menu.Item>
                     {/* Remove menu item for document management */}
                     {/* <Menu.Item key="8" icon={<FileTextOutlined />}>
                         <Link to="/documents">文档管理</Link>
@@ -117,6 +124,7 @@ function App() {
                             <Route path="/agent-prompt" element={<AgentPromptPage />} />
                             <Route path="/graph-view" element={<GraphVisualizerPage />} />
                             <Route path="/tags" element={<TagManagementPage />} />
+                            <Route path="/debug" element={<DebugPage />} />
                             {/* Remove route for document management */}
                             {/* <Route path="/documents" element={<ManageDocuments />} /> */}
                             <Route path="/" element={<Navigate to="/chat" replace />} />
