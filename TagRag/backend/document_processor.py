@@ -17,7 +17,7 @@ from langchain_community.vectorstores.utils import filter_complex_metadata
 import warnings
 import logging
 from sqlalchemy.orm import Session
-from .models import Tag as DBTag, Document as DBDocument, DocumentChunk
+from .models import Tag as DBTag, Document as DBDocument, DocumentChunk, KnowledgeBase
 import datetime
 import tempfile
 import json
@@ -25,10 +25,18 @@ import re
 import traceback
 import tiktoken
 from fastapi import HTTPException
+from sqlalchemy.orm import selectinload
+from sqlalchemy import func, distinct
+import shutil
+import asyncio
 
 # Import LLMClient and Tag model for auto-tagging
+from . import crud, schemas, models
 from .tag_routes import llm_client # Assuming llm_client is an instance of LLMClient
-from .models import Tag as DBTag, Document as DBDocument, DocumentChunk # Alias to avoid conflict with Langchain Document's Tag
+from .models import Tag as DBTag, Document as DBDocument, DocumentChunk, KnowledgeBase, document_chunk_tags # Alias to avoid conflict with Langchain Document's Tag
+from .vector_store import VectorStore # Assuming VectorStore is in the same directory
+from .enhanced_code_analyzer import EnhancedCodeAnalyzer # Assuming E-C-A is in the same directory
+from .auth import get_current_user # Import user authentication function
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
@@ -51,29 +59,35 @@ def count_tokens(text: str) -> int:
 class DocumentProcessor:
     """处理各种文档格式并进行分块处理的类"""
     
-    def __init__(self, vector_store=None):
+    def __init__(self, db: Session, user: models.User, vector_store_path: str = "./data/vector_db"):
+        if not user or not user.organization_id:
+            raise ValueError("User and organization context is required.")
+        self.db = db
+        self.user = user
+        self.organization_id = user.organization_id
+        self.vector_store_path = vector_store_path
+        self.vector_stores = {}
+        self.logger = logging.getLogger(__name__)
+        
         # 文本分割配置
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             length_function=len,
         )
-        self.vector_store = vector_store
-        
-        # 文档加载器映射
         self.loaders = {
-            '.txt': TextLoader,
-            '.pdf': PyPDFLoader,
-            '.docx': Docx2txtLoader,
-            '.csv': CSVLoader,
-            '.xlsx': UnstructuredExcelLoader,
-            '.xls': UnstructuredExcelLoader,
-            '.md': UnstructuredMarkdownLoader,
-            '.html': UnstructuredHTMLLoader,
-            '.htm': UnstructuredHTMLLoader,
-            '.pptx': UnstructuredPowerPointLoader,
-            '.ppt': UnstructuredPowerPointLoader,
-        }
+             '.txt': TextLoader,
+             '.pdf': PyPDFLoader,
+             '.docx': Docx2txtLoader,
+             '.csv': CSVLoader,
+             '.xlsx': UnstructuredExcelLoader,
+             '.xls': UnstructuredExcelLoader,
+             '.md': UnstructuredMarkdownLoader,
+             '.html': UnstructuredHTMLLoader,
+             '.htm': UnstructuredHTMLLoader,
+             '.pptx': UnstructuredPowerPointLoader,
+             '.ppt': UnstructuredPowerPointLoader,
+         }
     
     def ensure_document(self, obj: Any, metadata: Dict[str, Any] = None) -> Document:
         """确保对象是Document类型，如果不是则转换为Document对象
@@ -242,11 +256,13 @@ class DocumentProcessor:
             try:
                 tag_orm_instance = db.query(DBTag).filter(DBTag.name.ilike(tag_name_cleaned)).first()
                 if not tag_orm_instance:
-                    logger.info(f"Tag '{tag_name_cleaned}' not found, creating new one for doc_id: {db_document.id}.")
+                    logger.info(
+                        f"Tag '{tag_name_cleaned}' not found, creating new one for doc_id: {db_document.id}."
+                    )
                     tag_orm_instance = DBTag(
-                        name=tag_name_cleaned, 
+                        name=tag_name_cleaned,
+                        organization_id=db_document.organization_id,
                         description=f"Automatically generated tag for: {tag_name_cleaned}",
-                        color="#4287f5",
                         tag_type="auto-generated"
                     )
                     db.add(tag_orm_instance)
@@ -296,7 +312,8 @@ class DocumentProcessor:
             document_type=os.path.splitext(original_filename if original_filename else file_path)[1].lower(),
             knowledge_base_id=knowledge_base_id,
             repository_id=repository_id, # Assuming repository_id is for context/grouping, not primary storage key here
-            status="processing_started"
+            status="processing_started",
+            organization_id=db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first().organization_id
         )
         db.add(db_document)
         try:
@@ -447,27 +464,26 @@ class DocumentProcessor:
                         
                         # 使用原生SQL删除所有块的标签关联
                         if chunk_ids:
-                            delete_sql = text(f"DELETE FROM document_chunk_tags WHERE document_chunk_id IN ({','.join(map(str, chunk_ids))})")
+                            # FIX: Use the correct column name 'chunk_id'
+                            delete_sql = text(f"DELETE FROM document_chunk_tags WHERE chunk_id IN ({','.join(map(str, chunk_ids))})")
                             db.execute(delete_sql)
-                            db.commit()
+                            # No commit needed here if we commit transactionally at the end
                             logger.info(f"已清除{len(chunk_ids)}个文档块的现有标签关联")
                             
                             # 为每个块创建新的标签关联
+                            new_associations = []
                             for chunk_id in chunk_ids:
                                 for tag_id in tag_ids:
-                                    # 使用原生SQL插入关联
-                                    insert_sql = text(f"INSERT INTO document_chunk_tags (document_chunk_id, tag_id) VALUES ({chunk_id}, {tag_id})")
-                                    try:
-                                        db.execute(insert_sql)
-                                    except Exception as e_insert:
-                                        # 可能是重复键，忽略
-                                        logger.debug(f"插入块{chunk_id}与标签{tag_id}关联时出错: {str(e_insert)}")
+                                    # Use a dictionary for bulk insert
+                                    new_associations.append({'chunk_id': chunk_id, 'tag_id': tag_id})
                             
-                            # 提交所有插入
-                            db.commit()
+                            if new_associations:
+                                # Use SQLAlchemy Core insert for safety and efficiency
+                                db.execute(document_chunk_tags.insert().values(new_associations))
+
                             logger.info(f"成功为{len(chunk_ids)}个文档块创建了{len(tag_ids)}个标签关联")
                 except Exception as e_chunk_tag:
-                    logger.error(f"Error associating tags with document chunks for doc_id {document_id}: {e_chunk_tag}")
+                    logger.error(f"Error associating tags with document chunks for doc_id {document_id}: {e_chunk_tag}", exc_info=True)
                     db.rollback()
                     # 这个错误不应该终止整个流程
                     logger.warning(f"处理继续 - 文档块与标签关联不完整，但文档处理仍将继续")
@@ -516,7 +532,8 @@ class DocumentProcessor:
 
             # 4. Add to Vector Store (现在包含了正确格式的标签信息)
             if langchain_docs_for_vector_store:
-                from vector_store import VectorStore # Ensure import is within reach or global
+                # FIX: Use relative import for vector_store
+                from .vector_store import VectorStore 
                 
                 # 确保使用正确的知识库和仓库ID
                 if knowledge_base_id is not None:
@@ -726,9 +743,477 @@ class DocumentProcessor:
                 }))
         return all_documents
 
-    # _extract_and_store_entities method is assumed to be present as per original file (lines 528-670 approx)
     def _extract_and_store_entities(self, documents, document_id, repository_id, knowledge_base_id):
         # Original content of this method
         pass # Placeholder for diff
+
+    def initialize_document_in_db(
+        self, db, temp_file_path, file_name, file_ext, knowledge_base_id, repository_id
+    ):
+        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first()
+        if not kb:
+            # NOTE: This should ideally not be reachable if controller checks access
+            raise HTTPException(status_code=404, detail="Knowledge base not found.")
+
+        db_document = DBDocument(
+            path=temp_file_path,
+            source=file_name,
+            document_type=file_ext,
+            chunks_count=0,
+            knowledge_base_id=knowledge_base_id,
+            repository_id=repository_id,
+            status="processing_started",
+            organization_id=kb.organization_id,  # FIX
+        )
+        db.add(db_document)
+        try:
+            db.commit()
+            db.refresh(db_document)
+        except Exception as e_commit:
+            db.rollback()
+            logger.error(f"Failed to commit initial document record: {e_commit}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to create DB record: {e_commit}"
+            )
+        return db_document
+
+    async def process_document(
+        self,
+        file_path: str,
+        repository_id: int,
+        db: Session,
+        chunk_size: int = 1000,
+        knowledge_base_id: Optional[int] = None,
+        original_filename: Optional[str] = None
+    ):
+        self.text_splitter.chunk_size = chunk_size
+        source_name_for_logging = original_filename if original_filename else os.path.basename(file_path)
+        logger.info(f"process_document (new version) for: '{file_path}' (Original: '{source_name_for_logging}'), KB_ID: {knowledge_base_id}")
+
+        db_document = DBDocument(
+            path=file_path, # This is the temp path
+            source=original_filename if original_filename else os.path.basename(file_path),
+            document_type=os.path.splitext(original_filename if original_filename else file_path)[1].lower(),
+            knowledge_base_id=knowledge_base_id,
+            repository_id=repository_id, # Assuming repository_id is for context/grouping, not primary storage key here
+            status="processing_started",
+            organization_id=db.query(KnowledgeBase).filter(KnowledgeBase.id == knowledge_base_id).first().organization_id
+        )
+        db.add(db_document)
+        try:
+            db.commit()
+            db.refresh(db_document)
+            logger.info(f"DBDocument record created with ID: {db_document.id} for '{db_document.source}'")
+        except Exception as e_db_init:
+            logger.error(f"Error initially saving DBDocument for '{db_document.source}': {e_db_init}", exc_info=True)
+            db.rollback()
+            # Return an error structure or raise, ensuring no further processing attempt for this doc
+            raise HTTPException(status_code=500, detail=f"Failed to create DB record for document: {str(e_db_init)}")
+
+        document_id = db_document.id
+        final_status = "processing_failed"
+        final_error_message = None
+        processed_chunks_count = 0
+        vectorized_chunks_count = 0
+        associated_tag_names = []
+
+        try:
+            # 1. Load and split document into raw chunks
+            raw_langchain_chunks, content_sample_for_llm = await self._load_and_process_document(
+                file_path=file_path, 
+                document_id=document_id, 
+                repository_id=repository_id, 
+                db=db, 
+                knowledge_base_id=knowledge_base_id, 
+                original_filename=db_document.source
+            )
+
+            if not raw_langchain_chunks or (len(raw_langchain_chunks) == 1 and raw_langchain_chunks[0].page_content.startswith("[Error:")):
+                error_content = raw_langchain_chunks[0].page_content if raw_langchain_chunks else "Unknown loading error"
+                logger.error(f"Failed to load or split document '{db_document.source}' (ID: {document_id}). Error: {error_content}")
+                final_status = "error_loading"
+                final_error_message = error_content
+                db_document.status = final_status
+                db_document.error_message = final_error_message[:1024] if final_error_message else None
+                db_document.processed_at = datetime.datetime.utcnow()
+                db.commit()
+                return {
+                    "status": "error", 
+                    "message": f"Failed to load/split: {final_error_message}", 
+                    "document_id": document_id
+                }
+            
+            logger.info(f"Successfully loaded and split '{db_document.source}' into {len(raw_langchain_chunks)} raw chunks.")
+
+            # 修改顺序：先处理和保存文档块，再进行标签分析
+            # 3. Process Chunks: Save to DB and prepare for Vector Store
+            db_chunks_to_save: List[DocumentChunk] = []
+            langchain_docs_for_vector_store: List[Document] = []
+
+            for i, chunk_doc in enumerate(raw_langchain_chunks):
+                # 原始条件，跳过空/错误块
+                should_skip = False
+                if not isinstance(chunk_doc, Document) or not chunk_doc.page_content:
+                    should_skip = True
+                elif isinstance(chunk_doc.page_content, str) and chunk_doc.page_content.startswith("[Error:"):
+                    should_skip = True
+                
+                if should_skip:
+                    continue
+                
+                # 计算令牌数
+                token_count = count_tokens(chunk_doc.page_content) 
+
+                # Enrich metadata for this chunk
+                chunk_doc.metadata["token_count"] = token_count
+                chunk_doc.metadata["structural_type"] = chunk_doc.metadata.get('category', 'paragraph')
+
+                # Prepare DB ORM object (DocumentChunk)
+                try:
+                    chunk_metadata_for_db = json.dumps(chunk_doc.metadata)
+                except TypeError as te:
+                    logger.warning(f"Metadata for chunk {i} of doc {document_id} is not JSON serializable: {te}. Using filtered version.")
+                    temp_filtered_meta = filter_complex_metadata(chunk_doc.metadata.copy())
+                    chunk_metadata_for_db = json.dumps(temp_filtered_meta)
+                
+                db_chunk = DocumentChunk(
+                    document_id=document_id,
+                    content=chunk_doc.page_content,
+                    chunk_index=i,
+                    token_count=token_count,
+                    structural_type=chunk_doc.metadata["structural_type"],
+                    chunk_metadata=chunk_metadata_for_db,
+                    page=chunk_doc.metadata.get("page_number")
+                )
+                
+                db_chunks_to_save.append(db_chunk)
+
+                # Prepare Langchain Document for Vector Store
+                metadata_for_vector_store_dict = chunk_doc.metadata.copy()
+                
+                # Remove the list-based 'tag_ids' if it was accidentally set on chunk_doc.metadata earlier
+                if "tag_ids" in metadata_for_vector_store_dict:
+                    del metadata_for_vector_store_dict["tag_ids"]
+
+                # 只保留标量值
+                final_meta_for_chroma = {}
+                for k, v in metadata_for_vector_store_dict.items():
+                    if isinstance(v, (str, int, float, bool)):
+                        final_meta_for_chroma[k] = v
+
+                langchain_docs_for_vector_store.append(Document(page_content=chunk_doc.page_content, metadata=final_meta_for_chroma))
+                processed_chunks_count += 1
+
+            # 先保存文档块到数据库
+            if db_chunks_to_save:
+                db.add_all(db_chunks_to_save)
+                db.commit()
+                logger.info(f"Successfully saved {len(db_chunks_to_save)} DocumentChunk records to DB for doc_id {document_id}.")
+            else:
+                logger.warning(f"No valid DocumentChunk records to save to DB for doc_id {document_id}.")
+
+            # 2. 现在再进行Auto-tagging (更新顺序)
+            if content_sample_for_llm and content_sample_for_llm.strip(): # Check again before calling
+                try:
+                    logger.info(f"Attempting LLM auto-tagging for doc_id {document_id} ('{db_document.source}')")
+                    await self._analyze_and_associate_tags_via_llm(content_sample_for_llm, db_document, db)
+                    db.refresh(db_document) # Ensure db_document.tags is up-to-date from the session
+                    associated_tag_names = [tag.name for tag in db_document.tags] if db_document.tags else []
+                    logger.info(f"LLM auto-tagging completed for doc_id {document_id}. Associated tags: {associated_tag_names}")
+                except Exception as e_autotag:
+                    logger.error(f"Error during LLM auto-tagging for doc_id {document_id}: {e_autotag}", exc_info=True)
+                    # Non-fatal, proceed without LLM tags if analysis fails
+            else:
+                logger.info(f"Skipping LLM auto-tagging for doc_id {document_id} due to empty or error content sample.") 
+
+            document_level_tag_ids = [tag.id for tag in db_document.tags] if db_document.tags else []
+            logger.info(f"Document-level tag IDs for doc_id {document_id} after auto-tagging: {document_level_tag_ids}")
+
+            # 现在更新文档块的标签关系
+            if db_document.tags and db_chunks_to_save:
+                try:
+                    # 使用全新的方法处理标签关联，避免任何DELETE语句
+                    logger.info(f"开始为{len(db_chunks_to_save)}个文档块关联{len(db_document.tags)}个标签")
+                    
+                    # 获取标签ID列表
+                    tag_ids = [tag.id for tag in db_document.tags]
+                    if not tag_ids:
+                        logger.warning(f"文档{document_id}没有标签可关联")
+                    else:
+                        # 为每个文档块重新创建标签关联
+                        from sqlalchemy import text
+                        
+                        # 首先获取所有块的ID
+                        chunk_ids = [chunk.id for chunk in db_chunks_to_save if chunk.id]
+                        
+                        # 使用原生SQL删除所有块的标签关联
+                        if chunk_ids:
+                            # FIX: Use the correct column name 'chunk_id'
+                            delete_sql = text(f"DELETE FROM document_chunk_tags WHERE chunk_id IN ({','.join(map(str, chunk_ids))})")
+                            db.execute(delete_sql)
+                            # No commit needed here if we commit transactionally at the end
+                            logger.info(f"已清除{len(chunk_ids)}个文档块的现有标签关联")
+                            
+                            # 为每个块创建新的标签关联
+                            new_associations = []
+                            for chunk_id in chunk_ids:
+                                for tag_id in tag_ids:
+                                    # Use a dictionary for bulk insert
+                                    new_associations.append({'chunk_id': chunk_id, 'tag_id': tag_id})
+                            
+                            if new_associations:
+                                # Use SQLAlchemy Core insert for safety and efficiency
+                                db.execute(document_chunk_tags.insert().values(new_associations))
+
+                            logger.info(f"成功为{len(chunk_ids)}个文档块创建了{len(tag_ids)}个标签关联")
+                except Exception as e_chunk_tag:
+                    logger.error(f"Error associating tags with document chunks for doc_id {document_id}: {e_chunk_tag}", exc_info=True)
+                    db.rollback()
+                    # 这个错误不应该终止整个流程
+                    logger.warning(f"处理继续 - 文档块与标签关联不完整，但文档处理仍将继续")
+
+            # 现在更新向量存储的元数据，添加标签信息
+            if document_level_tag_ids:
+                for lang_doc in langchain_docs_for_vector_store:
+                    # 删除可能存在的旧tag_ids字段
+                    if "tag_ids" in lang_doc.metadata:
+                        del lang_doc.metadata["tag_ids"]
+                        
+                    # 添加标签信息: tag_10: True, tag_9: True 格式
+                    for tag_id in document_level_tag_ids:
+                        lang_doc.metadata[f"tag_{tag_id}"] = True
+                    
+                    # 确保知识库ID添加到metadata
+                    if knowledge_base_id:
+                        lang_doc.metadata["knowledge_base_id"] = knowledge_base_id
+                    
+                # 记录更新
+                logger.info(f"已经为向量存储文档更新标签元数据，标签ID: {document_level_tag_ids}")
+                # 记录样本以验证
+                if langchain_docs_for_vector_store:
+                    logger.info(f"元数据样本: {langchain_docs_for_vector_store[0].metadata}")
+            
+            # 验证向量存储元数据是否正确
+            has_invalid_metadata = False
+            for idx, lang_doc in enumerate(langchain_docs_for_vector_store):
+                meta = lang_doc.metadata
+                # 检查标签格式是否正确
+                if document_level_tag_ids:
+                    for tag_id in document_level_tag_ids:
+                        tag_key = f"tag_{tag_id}"
+                        if tag_key not in meta or meta[tag_key] is not True:
+                            logger.warning(f"文档 {document_id} 的块 {idx} 标签格式不正确: {tag_key} = {meta.get(tag_key)}")
+                            meta[tag_key] = True  # 修复格式
+                            has_invalid_metadata = True
+                # 确保知识库ID存在
+                if knowledge_base_id and ("knowledge_base_id" not in meta or meta["knowledge_base_id"] != knowledge_base_id):
+                    logger.warning(f"文档 {document_id} 的块 {idx} 知识库ID不正确: {meta.get('knowledge_base_id')} != {knowledge_base_id}")
+                    meta["knowledge_base_id"] = knowledge_base_id  # 修复知识库ID
+                    has_invalid_metadata = True
+            
+            if has_invalid_metadata:
+                logger.info("已修复部分文档元数据格式问题")
+
+            # 4. Add to Vector Store (现在包含了正确格式的标签信息)
+            if langchain_docs_for_vector_store:
+                # FIX: Use relative import for vector_store
+                from .vector_store import VectorStore 
+                
+                # 确保使用正确的知识库和仓库ID
+                if knowledge_base_id is not None:
+                    # 优先使用知识库ID
+                    vector_store_instance = VectorStore(knowledge_base_id=knowledge_base_id)
+                    logger.info(f"使用知识库ID {knowledge_base_id} 创建向量存储实例")
+                else:
+                    # 如果没有知识库ID，使用仓库ID
+                    vector_store_instance = VectorStore(repository_id=repository_id)
+                    logger.info(f"使用仓库ID {repository_id} 创建向量存储实例")
+                
+                # 记录重要信息，用于调试
+                logger.info(f"向量存储实例创建完成，collection_name: {vector_store_instance.collection_name}")
+                logger.info(f"添加 {len(langchain_docs_for_vector_store)} 个文档到向量存储，知识库ID: {knowledge_base_id}, 文档ID: {document_id}")
+                logger.info(f"第一个文档块元数据: {langchain_docs_for_vector_store[0].metadata}")
+                
+                # 添加文档到向量存储
+                vs_add_result = await vector_store_instance.add_documents(
+                    langchain_docs_for_vector_store, 
+                    source_file=source_name_for_logging,
+                    document_id=document_id
+                )
+                
+                if vs_add_result.get("status") == "error":
+                    logger.error(f"Failed to add documents to vector store for doc_id {document_id}. Error: {vs_add_result.get('message')}")
+                    final_status = "error_vector_store"
+                    final_error_message = vs_add_result.get('message', "Vector store addition failed")
+                else:
+                    vectorized_chunks_count = len(langchain_docs_for_vector_store)
+                    logger.info(f"Successfully added {vectorized_chunks_count} chunks to vector store for doc_id {document_id}.")
+                    if final_status == "processing_failed": # If no other error occurred yet
+                         final_status = "processed" # Mark as processed if vectorization was the last major step
+            else:
+                logger.warning(f"No valid Langchain Documents to add to vector store for doc_id {document_id}.")
+                if processed_chunks_count > 0 and final_status == "processing_failed": # If DB chunks were saved but nothing to vectorize
+                    final_status = "processed_no_vectors"
+
+            # Update final document status in DB
+            if final_status == "processing_failed" and not final_error_message: # Default to processed if no specific error was set
+                final_status = "processed"
+                if processed_chunks_count == 0:
+                    final_status = "empty_or_error_content" # If no chunks were processed at all
+            
+            db_document.status = final_status
+            db_document.error_message = final_error_message[:1024] if final_error_message else None
+            db_document.chunks_count = processed_chunks_count
+            db_document.processed_at = datetime.datetime.utcnow()
+            db.commit()
+            logger.info(f"Processing finished for doc_id {document_id} ('{db_document.source}') with status: {final_status}.")
+            
+            return {
+                "status": final_status,
+                "message": final_error_message if final_error_message else f"Document '{db_document.source}' processed.",
+                "document_id": document_id,
+                "processed_chunks_count": processed_chunks_count,
+                "vectorized_chunks_count": vectorized_chunks_count,
+                "associated_tags": associated_tag_names
+            }
+
+        except HTTPException as http_exc: # Re-raise HTTP exceptions from _analyze_and_associate_tags_via_llm or others
+            db.rollback()
+            # Ensure db_document is still usable or re-fetch if session was rolled back and invalidated it.
+            # Minimal update if possible, otherwise re-fetch.
+            # For simplicity, let's assume db_document is still valid for status update or error won't allow it.
+            try:
+                # Attempt to refresh if needed, or just use it if session state allows.
+                # db.refresh(db_document) # This might fail if session is bad
+                db_doc_to_update = db.query(DBDocument).filter(DBDocument.id == document_id).first()
+                if db_doc_to_update:
+                    db_doc_to_update.status = "error_processing_http"
+                    db_doc_to_update.error_message = str(http_exc.detail)[:1024]
+                    db_doc_to_update.processed_at = datetime.datetime.utcnow()
+                    db.commit()
+                else:
+                    logger.error(f"Failed to find document {document_id} to update status after HTTPException.")    
+            except Exception as e_status_update:
+                logger.error(f"Failed to update document status after HTTPException for doc_id {document_id}: {e_status_update}")
+                # db.rollback() # Rollback status update attempt if it fails
+            raise http_exc # Re-raise the original HTTPException
+        except Exception as e_main:
+            from fastapi import HTTPException # Defensive import for generic exception case
+            logger.error(f"Critical error in process_document for '{source_name_for_logging}' (doc_id {document_id}): {e_main}", exc_info=True)
+            db.rollback()
+            # Ensure db_document status reflects the failure even if it was partially updated
+            try:
+                db.refresh(db_document) # Get current state from DB if session is rolled back
+                db_document.status = "processing_failed_uncaught"
+                db_document.error_message = str(e_main)[:1024]
+                db_document.processed_at = datetime.datetime.utcnow()
+                db.commit()
+            except Exception as e_final_status:
+                logger.error(f"Failed to update final error status for doc_id {document_id}: {e_final_status}")
+            
+            # Do not re-raise generic Exception as HTTPException directly to avoid masking the original type
+            # Let FastAPI handle it as a 500 Internal Server Error or define a specific error response structure.
+            # For now, we will raise a generic HTTPException to provide some feedback to the client.
+            raise HTTPException(status_code=500, detail=f"Internal server error during document processing: {str(e_main)}")
+
+    async def _associate_tags_with_chunks(self, db_doc: DBDocument):
+        """
+        Associates the document-level tags with all of its chunks.
+        """
+        doc_id = db_doc.id
+        # Reload the document with its chunks and tags to ensure the session has the latest data
+        db_doc_reloaded = self.db.query(DBDocument).options(
+            selectinload(DBDocument.chunks),
+            selectinload(DBDocument.tags)
+        ).filter(DBDocument.id == doc_id).one_or_none()
+
+        if not db_doc_reloaded or not db_doc_reloaded.tags:
+            self.logger.warning(f"No tags found for document {doc_id}, skipping chunk association.")
+            return
+
+        chunk_ids = [chunk.id for chunk in db_doc_reloaded.chunks]
+        tag_ids = [tag.id for tag in db_doc_reloaded.tags]
+        
+        if not chunk_ids:
+            self.logger.info(f"Document {doc_id} has no chunks, skipping tag-chunk association.")
+            return
+
+        self.logger.info(f"开始为{len(chunk_ids)}个文档块关联{len(tag_ids)}个标签")
+
+        try:
+            # Efficiently delete existing associations for these chunks
+            # IMPORTANT: Using the correct column name 'chunk_id' instead of 'document_chunk_id'
+            self.db.execute(
+                document_chunk_tags.delete().where(document_chunk_tags.c.chunk_id.in_(chunk_ids))
+            )
+            
+            # Create new associations in bulk
+            new_associations = []
+            for chunk_id in chunk_ids:
+                for tag_id in tag_ids:
+                    new_associations.append({'chunk_id': chunk_id, 'tag_id': tag_id})
+            
+            if new_associations:
+                self.db.execute(document_chunk_tags.insert().values(new_associations))
+            
+            self.db.commit()
+            self.logger.info(f"Successfully associated {len(tag_ids)} tags with {len(chunk_ids)} chunks for doc_id {doc_id}.")
+
+        except Exception as e:
+            self.logger.error(f"Error associating tags with document chunks for doc_id {doc_id}: {e}", exc_info=True)
+            self.db.rollback()
+            # This is not a fatal error for the whole process, so we log it and continue
+            self.logger.warning("处理继续 - 文档块与标签关联不完整，但文档处理仍将继续")
+
+    async def _update_vector_store_tags(self, knowledge_base_id: int, db_doc: DBDocument):
+        """
+        Updates the metadata of existing vectors in ChromaDB to reflect the new tags.
+        """
+        if knowledge_base_id not in self.vector_stores:
+            self.logger.warning(f"No vector store found for knowledge base {knowledge_base_id} during tag update.")
+            return
+
+        try:
+            # Assuming vector IDs are derivable or stored. Here, we fetch by document_id metadata.
+            # This part is highly dependent on how VectorStore is implemented.
+            # Let's assume a method `update_metadata_by_filter` exists.
+            
+            # Fetch all chunks for the document to update their metadata in the vector store
+            all_chunks_for_doc = self.db.query(DBDocumentChunk).filter(DBDocumentChunk.document_id == db_doc.id).all()
+            if not all_chunks_for_doc:
+                self.logger.info(f"No chunks found in DB for doc_id {db_doc.id} to update in vector store.")
+                return
+
+            # Get the full list of tag IDs associated with the document
+            tag_ids = [tag.id for tag in db_doc.tags]
+            self.logger.info(f"已经为向量存储文档更新标签元数据，标签ID: {tag_ids}")
+
+            # Prepare the new metadata fields
+            new_tag_metadata = {f"tag_{tag_id}": True for tag_id in tag_ids}
+
+            # Example: A single chunk's metadata for logging
+            if all_chunks_for_doc:
+                sample_chunk = all_chunks_for_doc[0]
+                sample_metadata = {
+                    'source': db_doc.source, 
+                    'document_id': db_doc.id,
+                    'knowledge_base_id': knowledge_base_id,
+                    'chunk_index': sample_chunk.chunk_index,
+                    'token_count': sample_chunk.token_count,
+                    'structural_type': sample_chunk.structural_type
+                }
+                sample_metadata.update(new_tag_metadata)
+                self.logger.info(f"元数据样本: {sample_metadata}")
+
+            # This is a conceptual implementation. The actual VectorStore class needs a method
+            # to efficiently update metadata for a set of documents/chunks.
+            vector_store = self.vector_stores[knowledge_base_id]
+            vector_store.update_metadata_for_document(db_doc.id, new_tag_metadata)
+            
+            self.logger.info(f"Successfully updated tag metadata in vector store for document {db_doc.id}.")
+
+        except Exception as e:
+            self.logger.error(f"Failed to update vector store with new tags for document {db_doc.id}: {e}", exc_info=True)
+            # Not re-raising as this is a non-critical part of the main document processing flow.
 
 # Ensure this class definition ends correctly if there were more methods not shown in context 

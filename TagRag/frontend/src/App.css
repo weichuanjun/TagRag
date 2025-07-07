@@ -1,1 +1,24 @@
- 
+.App {
+    text-align: center;
+}
+
+#root,
+.App,
+.ant-layout {
+    height: 100%;
+}
+
+.logo {
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.logo h1 {
+    color: white;
+    margin: 0;
+}
