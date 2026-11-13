@@ -10,6 +10,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-3776AB)
 ![Claude](https://img.shields.io/badge/LLM-Claude-D97757)
 ![MCP](https://img.shields.io/badge/Agent-MCP-111111)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 [快速开始](#快速开始) · [给 Agent 用](#给-agent-用claude--mcp) · [工作原理](#工作原理) · [文档](#文档)
 
@@ -147,7 +148,8 @@ TagRag/
 ├── frontend/               # React + Ant Design：问答 · 文档管理 · 标签体系
 ├── docs/                   # 技术文档
 ├── docker-compose.yml
-└── Makefile
+├── Makefile
+└── LICENSE
 ```
 
 ## 现状与路线图
@@ -168,3 +170,7 @@ TagRAG 源自作者在企业 AI 导入方面的实践与写作：
 - [《Harness：企業AIエージェント導入の実践》](https://www.amazon.co.jp/dp/B0HQNNGRKY)：决定做之后，具体怎么搭。第 13 章「企业级 RAG」的思想就在本项目中实现。
 
 作者：Wei Chuanjun
+
+## 许可证
+
+[MIT](LICENSE)
