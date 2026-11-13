@@ -18,7 +18,15 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     max_upload_mb: int = 50
 
-    # ---- LLM（OpenAI 兼容协议：OpenAI / Azure / DeepSeek / 通义 / vLLM / Ollama 均可）----
+    # ---- LLM ----
+    llm_provider: str = "claude"              # claude（默认，Anthropic 官方 SDK）/ openai（OpenAI 兼容服务）
+    # Claude：凭证默认读 ANTHROPIC_API_KEY（或 `ant auth login`），也可用 TAGRAG_ANTHROPIC_API_KEY
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
+    claude_model: str = "claude-opus-5-5"
+    claude_effort: str = "medium"             # 作答的思考深度：low / medium / high / xhigh / max
+    tagging_effort: str = "low"               # 打标是分类任务，用 low 即可
+    # OpenAI 兼容（llm_provider=openai 时使用：OpenAI / Azure / DeepSeek / 通义 / vLLM / Ollama）
     llm_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
@@ -26,7 +34,9 @@ class Settings(BaseSettings):
     llm_timeout: float = 60.0
 
     # ---- Embedding ----
-    # openai: OpenAI 兼容 /embeddings 接口; local: sentence-transformers; hash: 离线/测试用
+    # Claude 没有 embedding 接口，Anthropic 推荐 Voyage AI：
+    # voyage: Voyage AI（需 TAGRAG_EMBEDDING_API_KEY）; openai: OpenAI 兼容 /embeddings;
+    # local: sentence-transformers（如 BAAI/bge-m3，日中英皆可）; hash: 离线/测试用
     embedding_provider: str = "hash"
     embedding_base_url: Optional[str] = None  # 默认复用 llm_base_url
     embedding_api_key: Optional[str] = None   # 默认复用 llm_api_key
@@ -63,9 +73,6 @@ class Settings(BaseSettings):
     def resolved_database_url(self) -> str:
         return self.database_url or f"sqlite:///{self.data_dir}/tagrag.db"
 
-    @property
-    def llm_enabled(self) -> bool:
-        return bool(self.llm_api_key)
 
     @property
     def api_key_set(self) -> set:

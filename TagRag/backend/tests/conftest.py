@@ -13,6 +13,9 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("TAGRAG_LLM_API_KEY", "")
     monkeypatch.setenv("TAGRAG_EMBEDDING_PROVIDER", "hash")
     monkeypatch.setenv("TAGRAG_API_KEYS", "")
+    monkeypatch.setenv("TAGRAG_LLM_PROVIDER", "claude")
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "TAGRAG_ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
     from app import config, db
     from app.providers import embeddings
     from app.retrieval import index

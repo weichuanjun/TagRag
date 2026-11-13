@@ -2,7 +2,7 @@
 import re
 from typing import AsyncIterator, List, Optional
 
-from .providers.llm import get_llm
+from .providers.llm import LLMRefused, get_llm
 from .retrieval.retriever import RetrievedChunk
 
 SYSTEM_PROMPT = """你是企业知识库问答助手。严格依据【参考资料】回答用户问题：
@@ -12,6 +12,7 @@ SYSTEM_PROMPT = """你是企业知识库问答助手。严格依据【参考资�
 4. 资料之间有冲突时，指出冲突并分别引用。
 5. 使用与用户提问相同的语言作答。"""
 
+REFUSED_ANSWER = "模型出于安全策略拒绝回答该问题。"
 NO_CONTEXT_ANSWER = "知识库中没有找到与该问题相关的信息。可以尝试换个说法，或确认相关文档已上传并完成处理。"
 
 
@@ -25,10 +26,12 @@ def format_sources(chunks: List[RetrievedChunk]) -> str:
 
 def build_messages(query: str, chunks: List[RetrievedChunk],
                    history: Optional[List[dict]] = None) -> List[dict]:
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+    msgs: List[dict] = []
     for h in (history or [])[-6:]:
         if h.get("role") in ("user", "assistant") and h.get("content"):
             msgs.append({"role": h["role"], "content": str(h["content"])[:2000]})
+    while msgs and msgs[0]["role"] != "user":  # 对话必须以 user 开头
+        msgs.pop(0)
     msgs.append({"role": "user", "content": f"【参考资料】\n{format_sources(chunks)}\n\n【问题】\n{query}"})
     return msgs
 
@@ -51,7 +54,10 @@ async def generate_answer(query: str, chunks: List[RetrievedChunk], history=None
     llm = get_llm()
     if not llm.enabled:
         return extractive_answer(chunks)
-    return await llm.chat(build_messages(query, chunks, history))
+    try:
+        return await llm.chat(SYSTEM_PROMPT, build_messages(query, chunks, history))
+    except LLMRefused:
+        return REFUSED_ANSWER
 
 
 async def stream_answer(query: str, chunks: List[RetrievedChunk], history=None) -> AsyncIterator[str]:
@@ -62,8 +68,11 @@ async def stream_answer(query: str, chunks: List[RetrievedChunk], history=None) 
     if not llm.enabled:
         yield extractive_answer(chunks)
         return
-    async for delta in llm.stream(build_messages(query, chunks, history)):
-        yield delta
+    try:
+        async for delta in llm.stream(SYSTEM_PROMPT, build_messages(query, chunks, history)):
+            yield delta
+    except LLMRefused:
+        yield f"\n\n{REFUSED_ANSWER}"
 
 
 def cited_indices(answer: str, n: int) -> List[int]:

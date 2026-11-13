@@ -10,6 +10,7 @@ from .api import chat, documents, knowledge_bases, tags
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import DocStatus, Document
+from .providers.llm import get_llm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("tagrag")
@@ -33,7 +34,8 @@ async def lifespan(app: FastAPI):
     init_db()
     Thread(target=_resume_unfinished, daemon=True).start()
     s = get_settings()
-    logger.info("TagRAG 启动：LLM=%s, embedding=%s", s.llm_model if s.llm_enabled else "未配置",
+    llm = get_llm()
+    logger.info("TagRAG 启动：LLM=%s, embedding=%s", llm.name if llm.enabled else f"{llm.name}（未配置凭证）",
                 s.embedding_provider)
     yield
 
@@ -57,4 +59,5 @@ app.include_router(chat.feedback_router)
 @app.get("/api/health")
 def health():
     s = get_settings()
-    return {"status": "ok", "llm": s.llm_enabled, "embedding": s.embedding_provider}
+    llm = get_llm()
+    return {"status": "ok", "llm": llm.name, "llm_ready": llm.enabled, "embedding": s.embedding_provider}

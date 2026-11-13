@@ -131,7 +131,8 @@ class QueryLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     kb_id: Mapped[int] = mapped_column(Integer, index=True)
-    user: Mapped[Optional[str]] = mapped_column(String(200), default=None)
+    user: Mapped[Optional[str]] = mapped_column(String(200), default=None)  # 用户ID 或 agent:<id>
+    kind: Mapped[str] = mapped_column(String(20), default="chat")  # chat / search
     query: Mapped[str] = mapped_column(Text)
     matched_tags: Mapped[list] = mapped_column(JSON, default=list)
     sources: Mapped[list] = mapped_column(JSON, default=list)

@@ -10,6 +10,10 @@ pypdf>=4.0
 python-docx>=1.1
 openpyxl>=3.1
 
+# Claude（默认 LLM）与 MCP（供 Claude 作为 Agent 调用）
+anthropic>=2.8,<3
+mcp>=2.3,<3
+
 # 可选：PostgreSQL
 # psycopg[binary]>=3.1
 # 可选：本地 embedding 模型（TAGRAG_EMBEDDING_PROVIDER=local）

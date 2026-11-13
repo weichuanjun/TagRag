@@ -136,6 +136,23 @@ def get_chunks(kb_id: int, doc_id: int, db: Session = Depends(get_db), user: Use
     } for c in chunks]
 
 
+@router.get("/{doc_id}/context")
+def chunk_context(kb_id: int, doc_id: int, chunk_id: int, window: int = 1, db: Session = Depends(get_db),
+                  user: UserContext = Depends(get_user)):
+    """取某个片段及其前后 window 个片段（供 Agent 展开根拠的上下文，权限同文档）。"""
+    doc = _get_doc(db, kb_id, doc_id, user)
+    target = db.get(Chunk, chunk_id)
+    if target is None or target.document_id != doc.id:
+        raise HTTPException(404, "片段不存在")
+    window = max(0, min(window, 5))
+    chunks = db.scalars(select(Chunk).where(Chunk.document_id == doc.id,
+                                            Chunk.ordinal.between(target.ordinal - window, target.ordinal + window))
+                        .order_by(Chunk.ordinal)).all()
+    return {"document_id": doc.id, "filename": doc.filename, "chunk_id": target.id,
+            "chunks": [{"id": c.id, "ordinal": c.ordinal, "heading_path": c.heading_path, "text": c.text,
+                        "is_target": c.id == target.id} for c in chunks]}
+
+
 class DocUpdate(BaseModel):
     tag_ids: Optional[List[int]] = None     # 人工标签（覆盖原人工标签）
     acl_groups: Optional[List[str]] = None

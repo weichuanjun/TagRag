@@ -23,11 +23,12 @@ class Embedder:
     dim: int
     name: str
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: List[str], input_type: str = "document") -> np.ndarray:
+        """input_type: document（入库内容）/ query（检索问题）。部分模型（如 Voyage）据此优化向量。"""
         raise NotImplementedError
 
-    def embed_one(self, text: str) -> np.ndarray:
-        return self.embed([text])[0]
+    def embed_one(self, text: str, input_type: str = "document") -> np.ndarray:
+        return self.embed([text], input_type)[0]
 
 
 class HashEmbedder(Embedder):
@@ -37,7 +38,7 @@ class HashEmbedder(Embedder):
         self.dim = dim
         self.name = f"hash-{dim}"
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: List[str], input_type: str = "document") -> np.ndarray:
         out = np.zeros((len(texts), self.dim), dtype=np.float32)
         for i, t in enumerate(texts):
             for tok in tokenize(t):
@@ -59,7 +60,10 @@ class OpenAIEmbedder(Embedder):
         self.name = f"openai:{model}"
         self.dim = 0
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def _body(self, batch: List[str], input_type: str) -> dict:
+        return {"model": self.model, "input": batch}
+
+    def embed(self, texts: List[str], input_type: str = "document") -> np.ndarray:
         vecs: List[List[float]] = []
         with httpx.Client(timeout=self.timeout) as client:
             for i in range(0, len(texts), self.batch_size):
@@ -67,7 +71,7 @@ class OpenAIEmbedder(Embedder):
                 resp = client.post(
                     f"{self.base_url}/embeddings",
                     headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"model": self.model, "input": batch},
+                    json=self._body(batch, input_type),
                 )
                 resp.raise_for_status()
                 data = sorted(resp.json()["data"], key=lambda d: d["index"])
@@ -75,6 +79,17 @@ class OpenAIEmbedder(Embedder):
         m = _normalize(np.asarray(vecs, dtype=np.float32))
         self.dim = m.shape[1]
         return m
+
+
+class VoyageEmbedder(OpenAIEmbedder):
+    """Voyage AI（Anthropic 推荐的 embedding 服务）。接口形状与 OpenAI 相同，额外区分 query / document。"""
+
+    def __init__(self, api_key: str, model: str, batch_size: int, timeout: float, base_url: str):
+        super().__init__(base_url, api_key, model, batch_size, timeout)
+        self.name = f"voyage:{model}"
+
+    def _body(self, batch: List[str], input_type: str) -> dict:
+        return {"model": self.model, "input": batch, "input_type": input_type}
 
 
 class LocalEmbedder(Embedder):
@@ -87,7 +102,7 @@ class LocalEmbedder(Embedder):
         self.dim = self.model.get_sentence_embedding_dimension()
         self.name = f"local:{model}"
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: List[str], input_type: str = "document") -> np.ndarray:
         m = self.model.encode(texts, batch_size=self.batch_size, normalize_embeddings=True)
         return np.asarray(m, dtype=np.float32)
 
@@ -103,6 +118,10 @@ def get_embedder() -> Embedder:
             batch_size=s.embedding_batch_size,
             timeout=s.llm_timeout,
         )
+    if s.embedding_provider == "voyage":
+        return VoyageEmbedder(api_key=s.embedding_api_key or "", model=s.embedding_model,
+                              batch_size=s.embedding_batch_size, timeout=s.llm_timeout,
+                              base_url=s.embedding_base_url or "https://api.voyageai.com/v1")
     if s.embedding_provider == "local":
         return LocalEmbedder(s.embedding_model, s.embedding_batch_size)
     if s.embedding_provider != "hash":

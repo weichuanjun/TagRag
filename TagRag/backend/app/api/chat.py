@@ -12,7 +12,7 @@ from ..config import get_settings
 from ..db import SessionLocal, get_db
 from ..models import QueryLog
 from ..rag import cited_indices, generate_answer, stream_answer
-from ..retrieval.retriever import RetrievalOptions, assemble_context, retrieve
+from ..retrieval.retriever import RetrievalOptions, assemble_context, assess_sufficiency, retrieve
 from ..security import UserContext, acl_groups_for, get_user
 from .knowledge_bases import get_kb_or_404
 
@@ -44,10 +44,11 @@ def _run_retrieval(db: Session, kb_id: int, body: SearchIn, user: UserContext):
     return res, context
 
 
-def _log(kb_id: int, user: UserContext, query: str, tags: list, sources: list, answer: str, t0: float) -> int:
+def _log(kb_id: int, user: UserContext, query: str, tags: list, sources: list, answer, t0: float,
+         kind: str = "chat") -> int:
     db = SessionLocal()
     try:
-        log = QueryLog(kb_id=kb_id, user=user.user_id, query=query, matched_tags=tags,
+        log = QueryLog(kb_id=kb_id, user=user.actor, kind=kind, query=query, matched_tags=tags,
                        sources=[{"chunk_id": s["chunk_id"], "document_id": s["document_id"], "score": s["score"]}
                                 for s in sources],
                        source_count=len(sources), answer=answer,
@@ -61,11 +62,14 @@ def _log(kb_id: int, user: UserContext, query: str, tags: list, sources: list, a
 
 @router.post("/search")
 def search(kb_id: int, body: SearchIn, db: Session = Depends(get_db), user: UserContext = Depends(get_user)):
-    """仅检索（不生成），返回每个片段的分数明细，便于调试和评测。"""
+    """仅检索（不生成）：给 Agent 取根拠，也用于调试和评测。返回根拠充分度与各路分数明细。"""
+    t0 = time.perf_counter()
     res, _ = _run_retrieval(db, kb_id, body, user)
+    results = [_source_out(i, c) for i, c in enumerate(res.chunks, start=1)]
+    log_id = _log(kb_id, user, body.query, res.query_tags, results, None, t0, kind="search")
     return {"query": res.query, "query_tags": res.query_tags, "candidates": res.candidates,
-            "timings_ms": res.timings_ms,
-            "results": [_source_out(i, c) for i, c in enumerate(res.chunks, start=1)]}
+            "sufficiency": assess_sufficiency(res.chunks), "log_id": log_id,
+            "timings_ms": res.timings_ms, "results": results}
 
 
 @router.post("/chat")

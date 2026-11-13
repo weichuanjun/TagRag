@@ -144,7 +144,7 @@ def retrieve(db: Session, kb_id: int, query: str, user_groups: Optional[Sequence
 
     index = get_kb_index(db, kb_id)
     tag_index = load_tag_index(db, kb_id)
-    qvec = get_embedder().embed_one(query)
+    qvec = get_embedder().embed_one(query, "query")
     timings["embed"] = (time.perf_counter() - t0) * 1000
 
     query_tags = match_query_tags(query, qvec, tag_index) if opts.use_tags else []
@@ -220,6 +220,22 @@ def retrieve(db: Session, kb_id: int, query: str, user_groups: Optional[Sequence
             tags=[tag_index.by_id[t].name for t in m.tags if t in tag_index.by_id],
         ))
     return RetrievalResult(query, query_tags_out, out, len(rrf), timings)
+
+
+def assess_sufficiency(chunks: List[RetrievedChunk]) -> str:
+    """根拠充分度（启发式，供 Agent 决定继续 / 停止 / 移交）：
+    sufficient: 最相关片段同时被语义与关键词召回靠前，或命中查询标签且至少一路靠前
+    weak: 有结果但信号不一致，Agent 应谨慎表述或补充检索
+    none: 没有任何可用根拠，Agent 不应作答
+    阈值需用评测集校准。"""
+    if not chunks:
+        return "none"
+    top = chunks[0]
+    dense_top = top.dense_rank is not None and top.dense_rank < 3
+    sparse_top = top.sparse_rank is not None and top.sparse_rank < 3
+    if (dense_top and sparse_top) or (top.tag_score >= 0.5 and (dense_top or sparse_top)):
+        return "sufficient"
+    return "weak"
 
 
 def assemble_context(chunks: List[RetrievedChunk], budget: int) -> List[RetrievedChunk]:

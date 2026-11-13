@@ -57,7 +57,41 @@ TagRAG 用一套**按知识库治理的标签体系（taxonomy）**来增强检�
   - 问答日志与 👍/👎 反馈，可以用来积累评测集。
   - 统计看板。
   - 检索评测脚本，对比 Hit@K 和 MRR。
-- **模型无关**：LLM 和 Embedding 都走 OpenAI 兼容协议（OpenAI、Azure、DeepSeek、通义、智谱、vLLM、Ollama 均可）。Embedding 也可以用本地 sentence-transformers（推荐 `BAAI/bge-m3`、`bge-small-zh-v1.5`）。不配置 LLM 时，系统降级为抽取式回答，仍然可以完整运行。
+- **默认使用 Claude**：通过 Anthropic 官方 SDK 调用 `claude-opus-5-5`。
+  - 打标用结构化输出（JSON Schema），保证结果可解析；思考深度用 `low` effort。
+  - 作答用 `medium` effort。
+  - 稳定的系统提示带缓存标记，批量打标时可以命中提示缓存。
+  - 开启服务端拒答兜底（`fallbacks: "default"`）：被安全策略拒答时，服务端自动换模型重试。
+  - 也可以切换到任何 OpenAI 兼容服务（`TAGRAG_LLM_PROVIDER=openai`）。
+- **Embedding**：Claude 没有 embedding 接口。推荐 Voyage AI（Anthropic 推荐，区分 query / document），也可以用本地 `BAAI/bge-m3` 或 OpenAI 兼容接口。
+- **不配置 LLM 也能运行**：系统降级为抽取式回答，直接返回最相关的原文。
+
+### 给 Agent 用：MCP 服务器
+
+TagRAG 自带 MCP 服务器，Claude Code、Claude Desktop 或自建的 Claude Agent 都可以把它当作「受治理的根拠层」来调用。MCP 服务器是 REST API 的薄客户端，所以 Agent 和人走的是同一套权限与审计。
+
+| 工具 | 作用 |
+|---|---|
+| `list_knowledge_bases` | 列出 Agent 可访问的知识库 |
+| `list_scopes` | 查看标签体系（按维度分组），用于限定检索范围 |
+| `search_evidence` | 检索根拠：返回带编号的片段（E1、E2…）、来源与章节、标签，以及**根拠充分度** `sufficient / weak / none` 和下一步建议 |
+| `read_context` | 展开某条根拠前后的原文 |
+
+治理要点：
+- Agent 的身份写在 `TAGRAG_AGENT_ID`，每次检索都以 `agent:<id>` 记入审计日志。
+- Agent 能看到哪些文档由 `TAGRAG_AGENT_GROUPS` 决定，按最小权限配置。
+- `sufficiency=none` 时，工具会明确告诉 Agent 不要凭常识作答（Harness 中的「停止 / 移交」）。
+- 未知的 scope 等错误会原样返回给 Agent，让它自己纠正。
+
+在 Claude Code 中注册（在 `TagRag/backend` 目录执行）：
+
+```bash
+claude mcp add tagrag \
+  --env TAGRAG_URL=http://localhost:8000 \
+  --env TAGRAG_AGENT_ID=claude-code \
+  --env TAGRAG_AGENT_GROUPS=staff \
+  -- python -m app.mcp_server
+```
 
 ## 三、快速开始
 
@@ -78,7 +112,7 @@ cd TagRag/backend
 pip install -r requirements-dev.txt
 cp .env.example .env
 uvicorn app.main:app --reload --port 8000     # API 文档：http://localhost:8000/docs
-pytest -q                                      # 测试（离线可运行，不需要 API Key）
+pytest -q                                      # 测试（离线可运行，不需要 API Key；含 MCP 端到端测试）
 
 # 前端
 cd TagRag/frontend
@@ -147,6 +181,8 @@ TagRag/backend/app/
   tagging/             # 标签体系治理(taxonomy) + 打标与查询标签匹配(tagger)
   retrieval/           # 内存索引(稠密 + BM25 + 标签倒排) + 三路召回融合检索(retriever)
   rag.py               # 带引用的生成 / 拒答 / 降级
+  providers/           # Claude（默认）/ OpenAI 兼容；Voyage / 本地 / OpenAI 兼容 embedding
+  mcp_server.py        # 供 Claude 等 Agent 调用的 MCP 服务器
   api/                 # REST 接口
 TagRag/frontend/src/pages/  # 智能问答 / 文档管理 / 标签体系
 ```
