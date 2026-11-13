@@ -1,8 +1,10 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from threading import Thread
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
@@ -61,3 +63,18 @@ def health():
     s = get_settings()
     llm = get_llm()
     return {"status": "ok", "llm": llm.name, "llm_ready": llm.enabled, "embedding": s.embedding_provider}
+
+
+_web_dir = get_settings().web_dir
+if _web_dir:
+    _web_root = os.path.realpath(_web_dir)
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def web(path: str):
+        """前端页面（单页应用）：存在的静态文件直接返回，其余路由回退到 index.html。"""
+        if path.startswith("api/"):
+            raise HTTPException(404)
+        target = os.path.realpath(os.path.join(_web_root, path))
+        if path and target.startswith(_web_root + os.sep) and os.path.isfile(target):
+            return FileResponse(target)
+        return FileResponse(os.path.join(_web_root, "index.html"))

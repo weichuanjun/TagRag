@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     api_keys: str = ""
     cors_origins: str = "*"
     max_upload_mb: int = 50
+    # 设置后由后端直接提供前端页面（指向 frontend 的 build 目录），单端口即可使用
+    web_dir: str = ""
 
     # ---- LLM ----
     llm_provider: str = "claude"              # claude（默认，Anthropic 官方 SDK）/ openai（OpenAI 兼容服务）
