@@ -1,36 +1,24 @@
 {
-    "name": "rag-agent-frontend",
-    "version": "0.1.0",
+    "name": "tagrag-frontend",
+    "version": "2.0.0",
     "private": true,
     "dependencies": {
         "@ant-design/icons": "^4.8.0",
-        "@testing-library/jest-dom": "^5.17.0",
-        "@testing-library/react": "^13.4.0",
-        "@testing-library/user-event": "^13.5.0",
         "antd": "^5.9.0",
         "axios": "^1.5.0",
-        "d3": "^7.8.5",
-        "dagre": "^0.8.5",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
-        "react-force-graph-2d": "^1.25.3",
         "react-markdown": "^8.0.7",
         "react-router-dom": "^6.15.0",
-        "react-scripts": "5.0.1",
-        "react-syntax-highlighter": "^15.5.0",
-        "reactflow": "^11.11.4",
-        "web-vitals": "^2.1.4"
+        "react-scripts": "5.0.1"
     },
     "scripts": {
         "start": "react-scripts start",
-        "build": "react-scripts build",
-        "test": "react-scripts test",
-        "eject": "react-scripts eject"
+        "build": "react-scripts build"
     },
     "eslintConfig": {
         "extends": [
-            "react-app",
-            "react-app/jest"
+            "react-app"
         ]
     },
     "browserslist": {

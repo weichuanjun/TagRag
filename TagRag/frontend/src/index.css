@@ -1,405 +1,54 @@
 body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-        sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #f5f6f8;
 }
 
-code {
-    font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-        monospace;
-}
-
-.app-container {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-}
-
-.main-content {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-}
-
-.sidebar {
-    width: 250px;
-    background-color: #f5f5f5;
-    border-right: 1px solid #e8e8e8;
-    overflow-y: auto;
-}
-
-.content-area {
-    flex: 1;
-    padding: 20px;
-    overflow-y: auto;
-}
-
-.chat-container {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
-.message-list {
+.chat-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 8px 4px 16px;
 }
 
-.user-message,
-.ai-message {
-    margin-bottom: 16px;
-    max-width: 80%;
-    padding: 12px 16px;
-    border-radius: 8px;
+.msg-user {
+    margin: 12px 0 12px auto;
+    max-width: 75%;
+    background: #1677ff;
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 10px;
+    white-space: pre-wrap;
 }
 
-.user-message {
-    align-self: flex-end;
-    background-color: #1890ff;
-    color: white;
-    margin-left: auto;
-}
-
-.ai-message {
-    align-self: flex-start;
-    background-color: #f5f5f5;
+.msg-ai {
+    margin: 12px auto 12px 0;
+    max-width: 85%;
+    background: #fff;
     border: 1px solid #e8e8e8;
+    padding: 12px 16px;
+    border-radius: 10px;
 }
 
-.message-input {
-    padding: 16px;
-    border-top: 1px solid #e8e8e8;
-}
+.markdown p:last-child { margin-bottom: 0; }
+.markdown table { border-collapse: collapse; }
+.markdown th, .markdown td { border: 1px solid #e8e8e8; padding: 4px 8px; }
 
-.upload-container {
-    margin-bottom: 24px;
-    padding: 24px;
-    border: 1px dashed #d9d9d9;
-    border-radius: 8px;
-    background-color: #fafafa;
-    text-align: center;
-}
-
-.document-list {
-    margin-top: 24px;
-}
-
-.document-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px;
-    border-bottom: 1px solid #e8e8e8;
-}
-
-.code-upload {
-    margin-top: 24px;
-}
-
-.spinner {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100%;
-}
-
-.markdown-content {
-    font-size: 14px;
-    line-height: 1.5;
-    width: 100%;
-    word-break: break-word;
-    overflow-wrap: break-word;
-}
-
-.markdown-content img {
-    max-width: 100%;
-    height: auto;
-}
-
-.markdown-content pre {
-    background-color: #f5f5f5;
-    padding: 12px;
+.cite {
+    display: inline-block;
+    font-size: 11px;
+    line-height: 16px;
+    padding: 0 5px;
+    margin: 0 1px;
     border-radius: 4px;
-    overflow-x: auto;
-    max-width: 100%;
-    font-size: 13px;
+    background: #e6f4ff;
+    color: #1677ff;
+    cursor: pointer;
 }
 
-.markdown-content code {
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+.source-text {
     white-space: pre-wrap;
     font-size: 13px;
-}
-
-.markdown-content table {
-    border-collapse: collapse;
-    width: 100%;
-    margin-bottom: 16px;
-}
-
-.markdown-content th,
-.markdown-content td {
-    border: 1px solid #e8e8e8;
-    padding: 8px 12px;
-}
-
-.markdown-content th {
-    background-color: #fafafa;
-}
-
-/* 添加淡入效果 */
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(5px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* 添加淡出效果 */
-@keyframes fadeOut {
-    from {
-        opacity: 1;
-        transform: translateY(0);
-    }
-
-    to {
-        opacity: 0;
-        transform: translateY(-5px);
-    }
-}
-
-/* 添加处理信息块的样式 */
-.processing-info-container {
-    padding: 10px 0;
-    position: relative;
-    min-width: 280px;
-}
-
-.processing-info-item {
-    animation: fadeIn 0.3s ease-in-out;
-    position: relative;
-    padding: 5px 12px !important;
-    margin-bottom: 8px;
-    border-left: 2px solid #4267B2;
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace !important;
-    line-height: 1.5 !important;
-    font-size: 11px !important;
-    background-color: rgba(245, 247, 250, 0.85);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    overflow-x: hidden;
-    text-overflow: ellipsis;
-    border-radius: 2px;
-    white-space: nowrap;
-    transition: all 0.3s ease;
-    min-height: 16px;
-    min-width: 260px;
-    display: flex;
-    align-items: center;
-}
-
-.processing-info-item .tag-label {
-    display: inline-block;
-    font-weight: 600;
-    color: #4267B2;
-    margin-right: 6px;
-    font-size: 10px;
-    opacity: 0.9;
-    letter-spacing: 0.3px;
-}
-
-.processing-info-item .process-description {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: #333;
-    max-width: calc(100% - 60px);
-}
-
-/* 呼吸效果动画 - 应用于整个对话框 */
-@keyframes breathing {
-    0% {
-        box-shadow: 0 1px 3px rgba(66, 103, 178, 0.15);
-    }
-
-    50% {
-        box-shadow: 0 1px 10px rgba(66, 103, 178, 0.3);
-    }
-
-    100% {
-        box-shadow: 0 1px 3px rgba(66, 103, 178, 0.15);
-    }
-}
-
-/* 类型样式定制 - 边框色 */
-.processing-info-item.tq-step {
-    border-left-color: #007bff;
-}
-
-.processing-info-item.tag-match {
-    border-left-color: #28a745;
-}
-
-.processing-info-item.tcus-step {
-    border-left-color: #6610f2;
-}
-
-.processing-info-item.retrieval {
-    border-left-color: #fd7e14;
-}
-
-/* 处理信息标题 */
-.processing-title {
-    display: flex;
-    align-items: center;
-    margin-bottom: 10px;
-    position: relative;
-    padding: 0 2px;
-}
-
-.processing-title::after {
-    content: "";
-    flex-grow: 1;
-    height: 1px;
-    background: linear-gradient(to right, rgba(66, 103, 178, 0.3), transparent);
-    margin-left: 10px;
-}
-
-/* 技术风格元素 */
-.tech-badge {
-    display: inline-block;
-    padding: 1px 5px;
-    border-radius: 3px;
-    background-color: rgba(66, 103, 178, 0.1);
-    font-size: 10px;
-    margin-left: 8px;
-    font-weight: 500;
-    color: #4267B2;
-    letter-spacing: 0.5px;
-    border: 1px solid rgba(66, 103, 178, 0.15);
-}
-
-/* 系统消息细节优化 */
-.system-message-content {
-    max-width: 100%;
-    width: 100%;
-    min-width: 300px;
-    animation: breathing 3s ease-in-out infinite;
-}
-
-/* 打字机效果 */
-.typewriter-effect {
-    overflow: hidden;
-    border-right: 2px solid rgba(66, 103, 178, 0.5);
-    white-space: nowrap;
-    margin: 0;
-    animation: typing 3.5s steps(40, end), blink-caret 0.75s step-end infinite;
-}
-
-@keyframes typing {
-    from {
-        width: 0
-    }
-
-    to {
-        width: 100%
-    }
-}
-
-@keyframes blink-caret {
-
-    from,
-    to {
-        border-color: transparent
-    }
-
-    50% {
-        border-color: rgba(66, 103, 178, 0.5)
-    }
-}
-
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(5px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-@keyframes fadeOut {
-    from {
-        opacity: 1;
-        transform: translateY(0);
-    }
-
-    to {
-        opacity: 0;
-        transform: translateY(-5px);
-    }
-}
-
-.system-message-appear {
-    animation: systemMessageAppear 0.4s ease-in-out;
-}
-
-@keyframes systemMessageAppear {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* 脉冲动画效果 */
-.pulse {
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0% {
-        box-shadow: 0 0 0 0 rgba(66, 103, 178, 0.4);
-    }
-
-    70% {
-        box-shadow: 0 0 0 6px rgba(66, 103, 178, 0);
-    }
-
-    100% {
-        box-shadow: 0 0 0 0 rgba(66, 103, 178, 0);
-    }
-}
-
-/* 科技风格的滚动条 */
-.chat-container::-webkit-scrollbar {
-    width: 8px;
-}
-
-.chat-container::-webkit-scrollbar-track {
-    background: rgba(240, 242, 245, 0.6);
-    border-radius: 8px;
-}
-
-.chat-container::-webkit-scrollbar-thumb {
-    background: rgba(66, 103, 178, 0.2);
-    border-radius: 8px;
-}
-
-.chat-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(66, 103, 178, 0.3);
+    color: #444;
+    max-height: 220px;
+    overflow-y: auto;
 }

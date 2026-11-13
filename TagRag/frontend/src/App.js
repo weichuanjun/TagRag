@@ -1,148 +1,117 @@
-import React, { useState } from 'react';
-import { Routes, Route, Link, Navigate } from 'react-router-dom';
-import { Layout, Menu, Typography } from 'antd';
-import {
-    MessageOutlined,
-    CodeOutlined,
-    FileOutlined,
-    DatabaseOutlined,
-    RobotOutlined,
-    ShareAltOutlined,
-    TagsOutlined,
-    ExperimentOutlined
-} from '@ant-design/icons';
-import axios from 'axios';
-
-// 导入页面组件
+import React, { useCallback, useEffect, useState } from 'react';
+import { Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
+import { Layout, Menu, Select, Space, Button, Modal, Input, Form, message, Typography } from 'antd';
+import { MessageOutlined, FileTextOutlined, TagsOutlined, SettingOutlined, PlusOutlined } from '@ant-design/icons';
+import { api, errMsg } from './api';
 import ChatPage from './pages/ChatPage';
-import FileUploadPage from './pages/FileUploadPage';
-import CodeAnalysisPage from './pages/CodeAnalysisPage';  // 保留代码分析页面
-import KnowledgeBasePage from './pages/KnowledgeBasePage';  // 新增知识库管理页面
-import AgentPromptPage from './pages/AgentPromptPage';  // 新增Agent提示词管理页面
-import GraphVisualizerPage from './pages/GraphVisualizerPage';  // 新增图可视化页面
-import TagManagementPage from './pages/TagManagementPage';  // 新增标签管理页面
-import DebugPage from './pages/DebugPage';  // 新增调试页面
-// import ManageDocuments from './pages/ManageDocuments'; // 移除导入
+import DocumentsPage from './pages/DocumentsPage';
+import TagsPage from './pages/TagsPage';
 
-// ==================================================================
-// 关键修改：确保开发环境使用代理
-// ==================================================================
-// 在开发环境中，baseURL应为空字符串，以便axios发送相对路径的请求（如 /knowledge-bases），
-// 这样请求才能被 React 开发服务器的 'proxy' 配置捕获并转发到 http://localhost:8000。
-// 如果设置为 'http://localhost:8000'，请求将直接发送到该地址，导致浏览器因CORS策略而阻止它。
-const API_BASE_URL = process.env.NODE_ENV === 'production'
-    ? process.env.REACT_APP_API_BASE_URL || ''
-    : '';
+const { Header, Content, Sider } = Layout;
 
-axios.defaults.baseURL = API_BASE_URL;
+export default function App() {
+    const location = useLocation();
+    const [kbs, setKbs] = useState([]);
+    const [kbId, setKbId] = useState(() => Number(localStorage.getItem('tagrag_kb')) || null);
+    const [creating, setCreating] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [form] = Form.useForm();
+    const [settingsForm] = Form.useForm();
 
-console.log(`[App.js] Axios baseURL is set to: "${API_BASE_URL || '(empty string, using proxy)'}"`);
-// ==================================================================
+    const loadKbs = useCallback(async () => {
+        try {
+            const { data } = await api.get('/api/kbs');
+            setKbs(data);
+            if (data.length && !data.find((k) => k.id === kbId)) setKbId(data[0].id);
+        } catch (e) {
+            message.error(`加载知识库失败：${errMsg(e)}`);
+        }
+    }, [kbId]);
 
-const { Content, Footer, Sider } = Layout;
-const { Title } = Typography;
+    useEffect(() => { loadKbs(); }, [loadKbs]);
+    useEffect(() => { if (kbId) localStorage.setItem('tagrag_kb', String(kbId)); }, [kbId]);
 
-function App() {
-    const [collapsed, setCollapsed] = useState(false);
+    const createKb = async () => {
+        const values = await form.validateFields();
+        try {
+            const { data } = await api.post('/api/kbs', values);
+            message.success('已创建');
+            setCreating(false);
+            form.resetFields();
+            setKbId(data.id);
+            loadKbs();
+        } catch (e) {
+            message.error(errMsg(e));
+        }
+    };
+
+    const saveSettings = () => {
+        const v = settingsForm.getFieldsValue();
+        ['api_key', 'user_groups'].forEach((k) => {
+            if (v[k]) localStorage.setItem(`tagrag_${k}`, v[k]);
+            else localStorage.removeItem(`tagrag_${k}`);
+        });
+        setSettingsOpen(false);
+        loadKbs();
+    };
+
+    const kb = kbs.find((k) => k.id === kbId);
+    const selected = location.pathname.split('/')[1] || 'chat';
 
     return (
         <Layout style={{ minHeight: '100vh' }}>
-            <Sider
-                breakpoint="lg"
-                collapsedWidth="0"
-                collapsed={collapsed}
-                onCollapse={(collapsed) => setCollapsed(collapsed)}
-                style={{
-                    overflow: 'auto',
-                    height: '100vh',
-                    position: 'fixed',
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    zIndex: 1000,
-                    transition: 'all 0.2s'
-                }}
-            >
-                <div style={{
-                    padding: '16px 24px',
-                    textAlign: 'center'
-                }}>
-                    <Title
-                        level={4}
-                        style={{
-                            margin: 0,
-                            color: 'white',
-                            fontWeight: 'bold',
-                            fontFamily: 'Helvetica, Arial, sans-serif'
-                        }}
-                    >
-                        TagRAG
-                    </Title>
-                </div>
-                <Menu theme="dark" defaultSelectedKeys={['1']} mode="inline">
-                    <Menu.Item key="1" icon={<MessageOutlined />}>
-                        <Link to="/chat">智能问答</Link>
-                    </Menu.Item>
-                    <Menu.Item key="2" icon={<FileOutlined />}>
-                        <Link to="/upload">文档上传</Link>
-                    </Menu.Item>
-                    <Menu.Item key="3" icon={<CodeOutlined />}>
-                        <Link to="/code-analysis">代码分析</Link>
-                    </Menu.Item>
-                    <Menu.Item key="4" icon={<DatabaseOutlined />}>
-                        <Link to="/knowledge-bases">知识库管理</Link>
-                    </Menu.Item>
-                    <Menu.Item key="5" icon={<RobotOutlined />}>
-                        <Link to="/agent-prompt">Agent提示词</Link>
-                    </Menu.Item>
-                    <Menu.Item key="6" icon={<ShareAltOutlined />}>
-                        <Link to="/graph-view">知识图谱</Link>
-                    </Menu.Item>
-                    <Menu.Item key="7" icon={<TagsOutlined />}>
-                        <Link to="/tags">标签管理</Link>
-                    </Menu.Item>
-                    <Menu.Item key="8" icon={<ExperimentOutlined />}>
-                        <Link to="/debug">调试页面</Link>
-                    </Menu.Item>
-                    {/* Remove menu item for document management */}
-                    {/* <Menu.Item key="8" icon={<FileTextOutlined />}>
-                        <Link to="/documents">文档管理</Link>
-                    </Menu.Item> */}
-                </Menu>
+            <Sider breakpoint="lg" collapsedWidth="0" theme="dark">
+                <div style={{ color: '#fff', fontSize: 20, fontWeight: 700, padding: '18px 24px' }}>TagRAG</div>
+                <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={[
+                    { key: 'chat', icon: <MessageOutlined />, label: <Link to="/chat">智能问答</Link> },
+                    { key: 'documents', icon: <FileTextOutlined />, label: <Link to="/documents">文档管理</Link> },
+                    { key: 'tags', icon: <TagsOutlined />, label: <Link to="/tags">标签体系</Link> },
+                ]} />
             </Sider>
-            <Layout className="site-layout" style={{
-                marginLeft: collapsed ? 0 : 200,
-                transition: 'margin-left 0.2s'
-            }}>
-                <Content style={{ margin: '0 16px' }}>
-                    <div className="site-layout-background" style={{ padding: 24, minHeight: 360 }}>
-                        <Routes>
-                            <Route path="/chat" element={<ChatPage />} />
-                            <Route path="/upload" element={<FileUploadPage />} />
-                            <Route path="/code-analysis" element={<CodeAnalysisPage />} />
-                            <Route path="/knowledge-bases" element={<KnowledgeBasePage />} />
-                            <Route path="/agent-prompt" element={<AgentPromptPage />} />
-                            <Route path="/graph-view" element={<GraphVisualizerPage />} />
-                            <Route path="/tags" element={<TagManagementPage />} />
-                            <Route path="/debug" element={<DebugPage />} />
-                            {/* Remove route for document management */}
-                            {/* <Route path="/documents" element={<ManageDocuments />} /> */}
-                            <Route path="/" element={<Navigate to="/chat" replace />} />
-                        </Routes>
-                    </div>
+            <Layout>
+                <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', alignItems: 'center',
+                    justifyContent: 'space-between', borderBottom: '1px solid #f0f0f0' }}>
+                    <Space>
+                        <Typography.Text type="secondary">知识库</Typography.Text>
+                        <Select style={{ minWidth: 220 }} value={kbId} onChange={setKbId} placeholder="请先创建知识库"
+                            options={kbs.map((k) => ({ value: k.id, label: `${k.name}（${k.documents} 文档）` }))} />
+                        <Button icon={<PlusOutlined />} onClick={() => setCreating(true)}>新建</Button>
+                    </Space>
+                    <Button type="text" icon={<SettingOutlined />} onClick={() => {
+                        settingsForm.setFieldsValue({
+                            api_key: localStorage.getItem('tagrag_api_key') || '',
+                            user_groups: localStorage.getItem('tagrag_user_groups') || '',
+                        });
+                        setSettingsOpen(true);
+                    }}>访问设置</Button>
+                </Header>
+                <Content style={{ margin: 16 }}>
+                    <Routes>
+                        <Route path="/chat" element={<ChatPage kb={kb} />} />
+                        <Route path="/documents" element={<DocumentsPage kb={kb} onChanged={loadKbs} />} />
+                        <Route path="/tags" element={<TagsPage kb={kb} onChanged={loadKbs} />} />
+                        <Route path="*" element={<Navigate to="/chat" replace />} />
+                    </Routes>
                 </Content>
-                <Footer style={{
-                    textAlign: 'center',
-                    padding: '10px 50px',
-                    height: '40px',
-                    lineHeight: '20px',
-                    fontSize: '14px',
-                    backgroundColor: '#f7f9fc',
-                    borderTop: '1px solid #e8e8e8'
-                }}>TagRAG ©2025 WEICHUANJUN</Footer>
             </Layout>
+
+            <Modal title="新建知识库" open={creating} onOk={createKb} onCancel={() => setCreating(false)}>
+                <Form form={form} layout="vertical">
+                    <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
+                    <Form.Item name="description" label="描述"><Input.TextArea rows={3} /></Form.Item>
+                </Form>
+            </Modal>
+            <Modal title="访问设置" open={settingsOpen} onOk={saveSettings} onCancel={() => setSettingsOpen(false)}>
+                <Form form={settingsForm} layout="vertical">
+                    <Form.Item name="api_key" label="API Key" extra="后端配置了 TAGRAG_API_KEYS 时需要">
+                        <Input.Password />
+                    </Form.Item>
+                    <Form.Item name="user_groups" label="用户组（逗号分隔）"
+                        extra="用于文档权限过滤；生产环境应由网关/SSO 注入，含 admin 才能管理">
+                        <Input placeholder="admin" />
+                    </Form.Item>
+                </Form>
+            </Modal>
         </Layout>
     );
 }
-
-export default App; 

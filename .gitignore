@@ -31,8 +31,8 @@ venv/
 *.log
 
 # 数据目录
-rag-agent/backend/data/
-rag-agent/backend/uploads/
+TagRag/data/
+TagRag/backend/data/
 
 # Node.js / React
 node_modules/
